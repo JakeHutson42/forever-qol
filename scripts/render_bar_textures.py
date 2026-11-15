@@ -27,6 +27,14 @@ def satin(x, y):
     highlight = 0.13 * exp(-((y - 0.18) / 0.32) ** 2)
     return 0.88 - 0.24 * y + highlight + 0.025 * cos((x - 0.42) * 2 * pi)
 
+def foundry(x, y):
+    # A broad enamel face with a shallow upper bevel and a darker lower edge.
+    # Keep the machining marks weak enough to disappear gracefully on thin bars.
+    bevel = 0.18 * exp(-((y - 0.11) / 0.075) ** 2)
+    lip = 0.06 * exp(-((y - 0.78) / 0.08) ** 2)
+    grain = 0.016 * cos((x * 7 + y * 0.7) * 2 * pi) + 0.008 * cos(y * 23 * 2 * pi)
+    return 0.94 - 0.29 * y + bevel - lip + grain
+
 
 def etched(x, y):
     # Recessed chevrons with a highlight on the lower edge of each cut.
@@ -63,7 +71,7 @@ def arc(x, y, outline=False):
 
 
 if __name__ == "__main__":
-    for name, surface in (("Satin", satin), ("Etched", etched), ("Woven", woven)):
+    for name, surface in (("Foundry", foundry), ("Satin", satin), ("Etched", etched), ("Woven", woven)):
         write_texture(name, 128, 32, lambda x, y: (surface(x, y), 1))
     write_texture("TrimJewel", 16, 16, jewel)
     write_texture("ArcFill", 128, 512, arc)

@@ -110,8 +110,14 @@ local function HandleCommand(message)
     local number = tonumber(command)
     if command == "" then
         Addon:ShowOptions()
+    elseif command == "swear" then
+        Addon:ShowPartyAlertOptions()
     elseif command == "move" then
         Addon:BeginResourceEdit()
+    elseif command == "loot" then
+        Addon:ShowLootLedger()
+    elseif command == "vendor" then
+        Addon:ShowOptions("vendorDeals")
     elseif number then
         Addon:SetScale(number)
     elseif command == "smaller" or command == "larger" then
@@ -126,7 +132,7 @@ local function HandleCommand(message)
         if resetPending then Addon:Print("Reset and UI reload are waiting for combat to end.") end
     else
         Addon:Print("/fqol - open settings. /fqol 0.50 - set scale (0.10 to 1.50).")
-        Addon:Print("/fqol move, /fqol smaller, /fqol larger, /fqol status, /fqol reset.")
+        Addon:Print("/fqol loot, /fqol move, /fqol smaller, /fqol larger, /fqol status, /fqol reset.")
     end
 end
 
@@ -164,17 +170,22 @@ frame:SetScript("OnEvent", function(_, event, name, action)
         Addon:ValidateElements()
         Addon:ValidateMinimap()
         Addon:ValidateResources()
+        Addon:ValidateWhispers()
+        Addon:ValidatePartyAlerts()
+        Addon:ValidateLootHistory()
         if Addon.lastBlockedAction then Addon.character.lastBlockedAction = Addon.lastBlockedAction end
         if firstLoad then
             Addon:Print("Ready. Type /fqol for settings. /fqol reset restores the game's scale.")
         end
     elseif event == "PLAYER_LOGIN" then
         loggedIn = true
+        Addon.VendorDeals:ConnectAuctionator()
         Addon.baseRootLocalScale = UIParent:GetScale()
         Addon.baseRootScale = UIParent:GetEffectiveScale()
         Addon:ApplyResources()
         Addon:UpdateMinimap()
         Addon:CreateOptions()
+        Addon:RestoreWhispers()
         ScheduleApply()
     elseif loggedIn and Addon.db then
         ScheduleApply() -- Includes late-loaded frames and new chat windows.

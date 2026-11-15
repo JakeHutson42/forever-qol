@@ -1,0 +1,8 @@
+# Forever QoL visual standard
+
+Apply the `ui-visual-fidelity` skill by default when creating or changing anything a player can see or interact with. The reference is FlareUI on WoW Forever, especially its settings panel, unit-frame treatments, and status-bar textures. The target is the same care at actual game scale, adapted to Forever QoL's identity and features. Use the installed FlareUI at `C:/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/FlareUI` or its [CurseForge gallery](https://www.curseforge.com/wow/addons/flareui/gallery) as the visual reference for substantial changes.
+
+- Settings should make controls easy to find and understand. Use a coherent header, clear navigation and selected states, readable section hierarchy, aligned controls, and contextual help or realistic previews where a setting benefits from them. Keep controls usable on a compact viewport.
+- Match HUD components to the same visual standard. Judge textures, frames, borders, fills, text, and empty tracks together at their shipped sizes. Verify partial fills and thin bars before choosing a texture. Use motion for meaningful feedback and preserve legibility over both bright and dark gameplay.
+- Review the actual visible result before calling visual work complete. Prefer the running client when available. Otherwise inspect a faithful render built from the implemented layout and assets, and report what remains unverified in game. Use code checks alongside visual review.
+- Apply this standard to the affected surface and its shared components. A quality pass does not expand the feature scope into unrelated screens, functionality, or deployment.

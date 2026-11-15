@@ -6,7 +6,7 @@ Built because WoW's default UI scale slider doesn't go low enough for my setup.
 
 ## Install
 
-1. [Download Forever QoL 1.7.0](downloads/ForeverQoL-1.7.0.zip?raw=true).
+1. [Download Forever QoL 1.0.0](downloads/ForeverQoL-1.0.0.zip?raw=true).
 2. Extract the `SmallerUI` folder into `_forever_/Interface/AddOns/` and enable it in game.
 3. Open `/fqol` or click the minimap gear to adjust your settings.
 
@@ -16,11 +16,16 @@ Enable **Swing timer** and choose a weapon lane, style, and theme. The timer sta
 
 ## Settings
 
-Open **Forever QoL** with `/fqol` or the minimap gear. Use **Interface** for global and individual UI scaling. The **Personal bars**, **Party bars**, and **Pet bars** pages each have three tabs.
+Open **Forever QoL** with `/fqol` or the minimap gear. Use **Interface** for global and individual UI scaling. The **Personal bars**, **Party bars**, and **Pet bars** pages each have four tabs.
 
 - **Display** controls health and power independently, with combat visibility and opacity.
 - **Layout** controls sizes, spacing, and grouping. Personal bars can use horizontal bars or a curved HUD.
-- **Appearance** controls themes, textures, colours, text, and motion.
+- **Appearance** controls themes, textures, colours, and motion.
+- **Text** controls formats, typography, and text on hover.
+
+Open **Loot Ledger** with `/fqol loot` or Shift-left-click the minimap gear. Search or filter loot and rolls, and select an entry to inspect its details. Enable **Show Loot Ledger launcher** under **Loot & Rolls** to add a button you can reposition in **Move Mode**.
+
+Right-click the minimap gear to open chat search. Shift-right-click it to show or hide the whisper bar.
 
 Open **Move Mode** from the sidebar or run `/fqol move`. Select an element or click a preview, drag to position it, and use **- / +** to resize. **Group** links related bars or Blizzard frames. Hold **Shift** to bypass snapping. **Done & Settings** saves and returns to your settings tab. **Cancel** or **Escape** restores the previous layout.
 

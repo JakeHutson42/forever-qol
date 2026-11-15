@@ -1,13 +1,15 @@
 ## Interface: 16001
 ## Title: Forever QoL
-## Notes: UI scaling, resource bars, and a swing timer. Type /fqol for settings.
+## Notes: UI scaling, resource bars, loot history, and more. Type /fqol for settings.
 ## Author: Jake
-## Version: 1.7.0
-## OptionalDeps: Blizzard_ColorPickerFrame
+## Version: 1.0.0
+## OptionalDeps: Blizzard_ColorPickerFrame, Auctionator
 ## SavedVariables: SmallerUIDB
 ## SavedVariablesPerCharacter: SmallerUICharDB
 
 SmallerUI.lua
+PartyAlerts.lua
+PartyAlertOptions.lua
 Elements.lua
 Minimap.lua
 Forecasts.lua
@@ -19,4 +21,15 @@ Resources.lua
 ResourceStyleOptions.lua
 ResourceOptions.lua
 SwingOptions.lua
+HistorySearch.lua
+LootHistory.lua
+LootOptions.lua
+Whispers.lua
+ChatSearch.lua
+TradeHistory.lua
+WhisperOptions.lua
+VendorDeals.lua
+VendorDealOptions.lua
+VendorFlipInventory.lua
+VendorFlipUI.lua
 Options.lua

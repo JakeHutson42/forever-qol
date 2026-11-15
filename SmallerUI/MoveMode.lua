@@ -129,6 +129,7 @@ local function Candidates()
     for _, view in ipairs(display.party) do View(view) end
     Add(display.player.seal, "player", "seal")
     Add(Addon:GetSwingTimerFrame(), "swing", "swing")
+    Add(Addon:GetLootLauncher(), "lootLauncher")
     return result
 end
 local function ClampOrigin(value, size, low, high)
@@ -182,6 +183,7 @@ function Addon:UpdateResourceMoveMode()
         elseif drag.sawHeld then
             if drag.scope == "seal" then self:EndSealDrag()
             elseif drag.scope == "swing" then self:EndSwingTimerDrag()
+            elseif drag.scope == "lootLauncher" then self:EndLootLauncherDrag()
             elseif drag.scope == "element" then self:EndElementDrag()
             else self:EndResourceDrag() end
             return
@@ -243,6 +245,7 @@ local targets = {
     { "swing:swing", "Swing timer", "swing", "swing" },
 }
 local sealTarget = { "seal:seal", "Paladin seal", "seal", "seal" }
+local lootTarget = { "lootLauncher:lootLauncher", "Loot Ledger launcher", "lootLauncher", "lootLauncher" }
 
 function Addon:CreateResourceMoveToolbar()
     if toolbar then return toolbar end
@@ -268,6 +271,10 @@ function Addon:CreateResourceMoveToolbar()
     if self:IsPaladin() then choices[#choices + 1] = sealTarget; byKey[sealTarget[1]] = sealTarget end
     local function Choices()
         local available = { unpack(choices) }
+        if Addon:GetLootSettings().showLauncher then
+            available[#available + 1] = lootTarget
+            byKey[lootTarget[1]] = lootTarget
+        end
         for _, entry in ipairs(Addon:GetElementMoveChoices()) do
             available[#available + 1] = entry
             byKey[entry[1]] = entry

@@ -3,15 +3,36 @@ local pages, notices, window = {}, {}, nil
 local UI = {}
 Addon.OptionsUI = UI
 local WHITE = "Interface\\Buttons\\WHITE8X8"
-local gold = { 0.83, 0.66, 0.35, 1 }
-local muted = { 0.34, 0.33, 0.30, 1 }
+local HEADER_ART = "Interface\\AddOns\\SmallerUI\\Media\\SettingsHeader.tga"
+local ENAMEL = "Interface\\AddOns\\SmallerUI\\Media\\Foundry.tga"
+local WINDOW_WIDTH, MIN_HEIGHT, MAX_HEIGHT = 878, 520, 690
+local gold = { 0.94, 0.78, 0.50, 1 }
+local ink = { 0.95, 0.93, 0.88, 1 }
+local quiet = { 0.70, 0.74, 0.74, 1 }
+local muted = { 0.32, 0.30, 0.25, 1 }
+local buttonFill = { 0.15, 0.19, 0.21, 1 }
+local selectedFill = { 0.30, 0.24, 0.16, 1 }
 local navigation = {
-    { "scaling", "Interface", "INV_Misc_Gear_01" },
+    { "scaling", "Interface", "INV_Misc_Gear_01", "Display & combat" },
     { "resources", "Personal bars", "INV_Potion_54" },
     { "party", "Party bars", "INV_Misc_GroupLooking" },
     { "pet", "Pet bars", "Ability_Hunter_BeastCall" },
     { "swing", "Swing timer", "INV_Sword_04" },
+    { "whispers", "Whisper Manager", "INV_Letter_15", "Utilities" },
+    { "loot", "Loot & Rolls", "INV_Misc_Bag_10" },
+    { "vendorDeals", "Vendor Deals", "INV_Misc_Coin_01" },
 }
+
+local function Animate(frame, duration, update)
+    local elapsed = 0
+    update(0)
+    frame:SetScript("OnUpdate", function(self, delta)
+        elapsed = elapsed + delta
+        local progress = math.min(elapsed / duration, 1)
+        update(1 - (1 - progress) ^ 2)
+        if progress == 1 then self:SetScript("OnUpdate", nil) end
+    end)
+end
 
 function UI.Label(parent, text, x, y, font, width)
     local label = parent:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")
@@ -77,22 +98,45 @@ function UI.Backdrop(frame, color, border)
     frame:SetBackdropBorderColor(unpack(border or muted))
 end
 
+function UI.Plate(frame, color)
+    frame:SetBackdrop({ bgFile = ENAMEL, edgeFile = WHITE, edgeSize = 1 })
+    frame:SetBackdropColor(unpack(color or { 0.12, 0.16, 0.18, 1 }))
+    frame:SetBackdropBorderColor(unpack(muted))
+end
+
 function UI.Button(parent, name, text, x, y, width, callback)
     local button = CreateFrame("Button", name, parent, "BackdropTemplate")
     button:SetPoint("TOPLEFT", x, y)
     button:SetSize(width, 26)
-    UI.Backdrop(button, { 0.11, 0.15, 0.19, 1 })
+    UI.Plate(button, buttonFill)
     local textLabel = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     textLabel:SetPoint("CENTER")
     button.label = textLabel
     button:SetFontString(textLabel)
     button:SetText(text)
+    textLabel:SetTextColor(unpack(ink))
     button:SetHighlightTexture(WHITE, "ADD")
-    button:GetHighlightTexture():SetVertexColor(0.24, 0.19, 0.11, 0.35)
+    button:GetHighlightTexture():SetVertexColor(0.33, 0.46, 0.55, 0.24)
+    button:SetPushedTexture(WHITE)
+    local pressed = button:GetPushedTexture()
+    pressed:SetBlendMode("ADD")
+    pressed:SetVertexColor(0.52, 0.41, 0.22, 0.35)
     button:SetScript("OnEnable", function(self) self:SetAlpha(1) end)
     button:SetScript("OnDisable", function(self) self:SetAlpha(0.45) end)
     button:SetScript("OnClick", callback)
     return button
+end
+
+local function SelectButton(button, selected)
+    if button.marker and not selected then
+        button:SetBackdropColor(0.07, 0.105, 0.14, 0)
+        button:SetBackdropBorderColor(0, 0, 0, 0)
+    else
+        button:SetBackdropColor(unpack(selected and selectedFill or buttonFill))
+        button:SetBackdropBorderColor(unpack(selected and gold or muted))
+    end
+    button.label:SetTextColor(unpack(selected and gold or ink))
+    if button.marker then button.marker:SetShown(selected) end
 end
 
 function UI.Select(parent, name, x, y, width, entries, get, set, initializeRow)
@@ -122,46 +166,78 @@ function UI.Switch(parent, name, text, x, y, callback, tip)
     thumb:SetSize(13, 12)
     local label = UI.Label(button, text, 48, -7)
     label:SetWordWrap(false)
-    function button:SetChecked(enabled)
-        self.checked = enabled == true
-        UI.Backdrop(track, self.checked and { 0.14, 0.33, 0.25, 1 } or { 0.06, 0.08, 0.11, 1 }, self.checked and gold or muted)
+    label:SetTextColor(unpack(ink))
+    UI.Backdrop(track, { 0.075, 0.10, 0.13, 1 })
+    local function PlaceThumb(offset)
         thumb:ClearAllPoints()
-        thumb:SetPoint(self.checked and "RIGHT" or "LEFT", self.checked and -3 or 3, 0)
-        thumb:SetColorTexture(unpack(self.checked and gold or muted))
+        thumb:SetPoint("LEFT", track, "LEFT", offset, 0)
+        button.thumbOffset = offset
+    end
+    function button:SetChecked(enabled, animate)
+        enabled = enabled == true
+        if self.checked == enabled then return end
+        self.checked = enabled
+        track:SetBackdropColor(unpack(enabled and { 0.16, 0.29, 0.26, 1 } or { 0.075, 0.10, 0.13, 1 }))
+        track:SetBackdropBorderColor(unpack(enabled and gold or muted))
+        thumb:SetColorTexture(unpack(enabled and gold or quiet))
+        local target = enabled and 20 or 3
+        if animate then
+            local start = self.thumbOffset
+            Animate(self, 0.12, function(progress) PlaceThumb(start + (target - start) * progress) end)
+        else
+            self:SetScript("OnUpdate", nil)
+            PlaceThumb(target)
+        end
     end
     function button:GetChecked() return self.checked end
     button:SetChecked(false)
     button:SetScript("OnEnable", function(self) self:SetAlpha(1) end)
     button:SetScript("OnDisable", function(self) self:SetAlpha(0.45) end)
     button:SetScript("OnClick", function(self)
-        self:SetChecked(not self:GetChecked())
+        self:SetChecked(not self:GetChecked(), true)
         callback(self:GetChecked())
+    end)
+    button:SetHighlightTexture(WHITE, "ADD")
+    button:GetHighlightTexture():SetVertexColor(0.16, 0.22, 0.28, 0.22)
+    button:SetScript("OnHide", function(self)
+        self:SetScript("OnUpdate", nil)
+        PlaceThumb(self.checked and 20 or 3)
     end)
     if tip then UI.Tooltip(button, tip) end
     return button
 end
 
 function UI.Section(parent, text, y)
-    local heading = UI.Label(parent, text, 12, y, "GameFontNormal")
+    local band = parent:CreateTexture(nil, "BACKGROUND")
+    band:SetTexture(ENAMEL)
+    band:SetPoint("TOPLEFT", 12, y)
+    band:SetPoint("TOPRIGHT", -12, y)
+    band:SetHeight(24)
+    band:SetVertexColor(0.13, 0.15, 0.16, 0.94)
+    local heading = UI.Label(parent, text, 22, y - 4, "GameFontNormal")
     heading:SetTextColor(unpack(gold))
     local line = parent:CreateTexture(nil, "ARTWORK")
-    line:SetColorTexture(0.83, 0.66, 0.35, 0.23)
-    line:SetPoint("TOPLEFT", 12, y - 21)
-    line:SetPoint("TOPRIGHT", -12, y - 21)
-    line:SetHeight(1)
+    line:SetColorTexture(0.70, 0.54, 0.32, 0.7)
+    line:SetPoint("TOPLEFT", 12, y)
+    line:SetSize(2, 24)
     return heading
 end
 
 function UI.Page(name, title, height)
     local page = CreateFrame("Frame", name, window)
-    page:SetPoint("TOPLEFT", 182, -70)
-    page:SetPoint("BOTTOMRIGHT", -18, 48)
+    page:SetPoint("TOPLEFT", 196, -93)
+    page:SetPoint("BOTTOMRIGHT", -18, 53)
     page:Hide()
     page.title = UI.Label(page, title, 12, -4, "GameFontNormalLarge")
-    page.title:SetTextColor(unpack(gold))
+    page.title:SetTextColor(unpack(ink))
+    local rule = page:CreateTexture(nil, "ARTWORK")
+    rule:SetPoint("TOPLEFT", 12, -37)
+    rule:SetPoint("TOPRIGHT", -12, -37)
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.23, 0.27, 0.30, 1)
     local scroll = CreateFrame("ScrollFrame", name .. "Scroll", page, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 0, -44)
-    scroll:SetPoint("BOTTOMRIGHT", -23, 0)
+    scroll:SetPoint("TOPLEFT", 0, -49)
+    scroll:SetPoint("BOTTOMRIGHT", -25, 0)
     local content = CreateFrame("Frame", name .. "Content", scroll)
     content:SetSize(620, height)
     scroll:SetScrollChild(content)
@@ -172,14 +248,14 @@ end
 function UI.Tabs(page, entries)
     page.tab = entries[1][1]
     for index, entry in ipairs(entries) do
-        entry.button = UI.Button(page, nil, entry[2], 218 + (index - 1) * 122, 0, 114,
+        entry.button = UI.Button(page, nil, entry[2], 648 - (#entries - index) * 105 - 98, 0, 98,
             function() page:SelectTab(entry[1]) end)
     end
     function page:SelectTab(key)
         self.tab = key
         for _, entry in ipairs(entries) do
             entry[3]:SetShown(entry[1] == key)
-            entry.button:SetBackdropBorderColor(unpack(entry[1] == key and gold or muted))
+            SelectButton(entry.button, entry[1] == key)
             if entry[1] == key then self.content:SetHeight(entry[3]:GetHeight()) end
         end
         self.scroll:SetVerticalScroll(0)
@@ -195,7 +271,7 @@ function Addon:SetPageStatus(key, text)
     if not window or self.currentOptionsPage ~= key then return end
     local notice = notices[key]
     window.status:SetText(notice and notice.text or text)
-    window.status:SetTextColor(unpack(notice and notice.error and { 1, 0.54, 0.45, 1 } or gold))
+    window.status:SetTextColor(unpack(notice and (notice.error and { 1, 0.64, 0.55, 1 } or gold) or quiet))
 end
 
 function Addon:OptionsFeedback(text, error, key)
@@ -337,8 +413,58 @@ end
 
 local function FitWindow()
     local width, height = UIParent:GetSize()
-    local scale = UIParent:GetEffectiveScale()
-    window:SetScale(math.max(0.1, math.min(1, (width * scale - 24) / 848, (height * scale - 24) / 650)))
+    local rootScale = UIParent:GetEffectiveScale()
+    local availableWidth, availableHeight = width * rootScale - 24, height * rootScale - 24
+    -- Use the active UI scale unless the settings window needs to shrink further to fit.
+    local scale = math.min(rootScale, math.max(0.1, math.min(availableWidth / WINDOW_WIDTH, availableHeight / MIN_HEIGHT)))
+    window:SetScale(scale)
+    window:SetHeight(math.max(MIN_HEIGHT, math.min(MAX_HEIGHT, math.floor(availableHeight / scale + 0.001))))
+end
+
+function UI.Header(frame, title, icon, onClose, artwork)
+    local header = CreateFrame("Frame", nil, frame)
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
+    header:SetHeight(74)
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", function() frame:StartMoving() end)
+    header:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
+    local background = header:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints()
+    background:SetColorTexture(0.04, 0.075, 0.105, 1)
+    local art = header:CreateTexture(nil, "BORDER")
+    art:SetAllPoints()
+    art:SetTexture(artwork or HEADER_ART)
+    local rule = header:CreateTexture(nil, "OVERLAY")
+    rule:SetPoint("BOTTOMLEFT")
+    rule:SetPoint("BOTTOMRIGHT")
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.68, 0.52, 0.31, 0.58)
+    local engraved = header:CreateTexture(nil, "ARTWORK")
+    engraved:SetPoint("TOPLEFT", 8, -6)
+    engraved:SetPoint("TOPRIGHT", -8, -6)
+    engraved:SetHeight(1)
+    engraved:SetColorTexture(0.74, 0.58, 0.34, 0.36)
+    local rim = header:CreateTexture(nil, "ARTWORK")
+    rim:SetSize(38, 38)
+    rim:SetPoint("LEFT", 19, 0)
+    rim:SetColorTexture(0.70, 0.55, 0.34, 1)
+    local emblem = header:CreateTexture(nil, "OVERLAY")
+    emblem:SetSize(34, 34)
+    emblem:SetPoint("CENTER", rim, "CENTER")
+    emblem:SetTexture("Interface\\Icons\\" .. icon)
+    emblem:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    local heading = UI.Label(header, title, 73, -25, "GameFontNormalLarge")
+    heading:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 23, "OUTLINE")
+    heading:SetTextColor(unpack(gold))
+    local close = UI.Button(header, nil, "\195\151", 0, 0, 32, onClose)
+    close:ClearAllPoints()
+    close:SetPoint("RIGHT", -15, 0)
+    close:SetHeight(32)
+    close.label:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 17, "")
+    UI.Tooltip(close, "Close " .. title)
+    return header
 end
 
 function Addon:CreateOptions()
@@ -346,58 +472,86 @@ function Addon:CreateOptions()
     if not self.db then return false end
     window = CreateFrame("Frame", "SmallerUISettings", UIParent, "BackdropTemplate")
     window:Hide()
-    window:SetSize(848, 650)
+    window:SetSize(WINDOW_WIDTH, MAX_HEIGHT)
     window:SetPoint("CENTER")
     window:SetIgnoreParentScale(true)
     window:SetFrameStrata("DIALOG")
     window:SetClampedToScreen(true)
     window:SetMovable(true)
     window:EnableMouse(true)
-    UI.Backdrop(window, { 0.048, 0.065, 0.085, 0.99 }, gold)
+    UI.Backdrop(window, { 0.048, 0.061, 0.068, 1 }, { 0.65, 0.49, 0.31, 1 })
     FitWindow()
-
-    local header = CreateFrame("Frame", nil, window)
-    header:SetPoint("TOPLEFT", 1, -1)
-    header:SetPoint("TOPRIGHT", -1, -1)
-    header:SetHeight(54)
-    header:EnableMouse(true)
-    header:RegisterForDrag("LeftButton")
-    header:SetScript("OnDragStart", function() window:StartMoving() end)
-    header:SetScript("OnDragStop", function() window:StopMovingOrSizing() end)
-    local top = header:CreateTexture(nil, "BACKGROUND")
-    top:SetAllPoints()
-    top:SetColorTexture(0.09, 0.13, 0.18, 1)
-    local emblem = header:CreateTexture(nil, "ARTWORK")
-    emblem:SetSize(30, 30)
-    emblem:SetPoint("LEFT", 18, 0)
-    emblem:SetTexture("Interface\\Icons\\INV_Misc_Gear_01")
-    emblem:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    UI.Label(header, self.displayName, 61, -16, "GameFontNormalLarge"):SetTextColor(unpack(gold))
-    local close = UI.Button(header, nil, "X", 799, -14, 28, function() Addon:HideOptions() end)
-    UI.Tooltip(close, "Close settings")
-
+    window.header = UI.Header(window, self.displayName, "INV_Misc_Gear_01", function() Addon:HideOptions() end)
     local rail = window:CreateTexture(nil, "BACKGROUND")
-    rail:SetPoint("TOPLEFT", 1, -55)
-    rail:SetPoint("BOTTOMLEFT", 1, 43)
-    rail:SetWidth(164)
-    rail:SetColorTexture(0.067, 0.091, 0.117, 1)
-    UI.Button(window, "SmallerUISettingsMove", "Move Mode", 16, -556, 134, function() Addon:BeginResourceEdit() end)
-    window.status = UI.Label(window, "", 18, -624, "GameFontHighlightSmall", 790)
+    rail:SetPoint("TOPLEFT", 1, -75)
+    rail:SetPoint("BOTTOMLEFT", 1, 41)
+    rail:SetWidth(184)
+    rail:SetTexture(ENAMEL)
+    rail:SetVertexColor(0.092, 0.112, 0.122)
+    local divider = window:CreateTexture(nil, "BORDER")
+    divider:SetPoint("TOPLEFT", rail, "TOPRIGHT")
+    divider:SetPoint("BOTTOMLEFT", rail, "BOTTOMRIGHT")
+    divider:SetWidth(1)
+    divider:SetColorTexture(0.36, 0.29, 0.21, 1)
+    local well = CreateFrame("Frame", nil, window, "BackdropTemplate")
+    well:SetFrameLevel(window:GetFrameLevel())
+    well:SetPoint("TOPLEFT", 191, -82)
+    well:SetPoint("BOTTOMRIGHT", -10, 45)
+    UI.Backdrop(well, { 0.066, 0.082, 0.089, 1 }, { 0.24, 0.25, 0.23, 1 })
+    local footer = window:CreateTexture(nil, "BORDER")
+    footer:SetPoint("BOTTOMLEFT", 1, 1)
+    footer:SetPoint("BOTTOMRIGHT", -1, 1)
+    footer:SetHeight(39)
+    footer:SetColorTexture(0.038, 0.054, 0.071, 1)
+    local rule = window:CreateTexture(nil, "BORDER")
+    rule:SetPoint("TOPLEFT", footer, "TOPLEFT")
+    rule:SetPoint("TOPRIGHT", footer, "TOPRIGHT")
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.20, 0.25, 0.30, 1)
+    local move = UI.Button(window, "SmallerUISettingsMove", "Move Mode", 0, 0, 157, function() Addon:BeginResourceEdit() end)
+    move:SetHeight(32)
+    move:ClearAllPoints()
+    move:SetPoint("BOTTOMLEFT", 14, 53)
+    SelectButton(move, true)
+    UI.Tooltip(move, "Reposition or resize your bars, swing timer, and other UI elements.")
+    window.status = window:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    window.status:SetPoint("BOTTOMLEFT", 18, 9)
+    window.status:SetPoint("BOTTOMRIGHT", -18, 9)
+    window.status:SetHeight(22)
+    window.status:SetJustifyH("LEFT")
+    window.status:SetWordWrap(true)
     window.entries = {}
-    for index, entry in ipairs(navigation) do
+    local y = -93
+    for _, entry in ipairs(navigation) do
         local key = entry[1]
-        local item = UI.Button(window, nil, entry[2], 12, -72 - (index - 1) * 44, 142,
+        if entry[4] then
+            UI.Label(window, entry[4], 19, y, "GameFontHighlightSmall"):SetTextColor(unpack(quiet))
+            y = y - 21
+        end
+        local item = UI.Button(window, nil, entry[2], 12, y, 160,
             function() Addon:ShowOptions(key) end)
-        item:SetHeight(36)
+        item:SetHeight(32)
         item.label:ClearAllPoints()
-        item.label:SetPoint("LEFT", 35, 0)
+        item.label:SetPoint("LEFT", 39, 0)
+        item.label:SetPoint("RIGHT", -6, 0)
+        item.label:SetJustifyH("LEFT")
+        item.label:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 12, "")
         local icon = item:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(17, 17)
-        icon:SetPoint("LEFT", 9, 0)
+        icon:SetSize(19, 19)
+        icon:SetPoint("LEFT", 10, 0)
         icon:SetTexture("Interface\\Icons\\" .. entry[3])
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        item.marker = item:CreateTexture(nil, "OVERLAY")
+        item.marker:SetSize(2, 18)
+        item.marker:SetPoint("LEFT", 0, 0)
+        item.marker:SetColorTexture(unpack(gold))
+        SelectButton(item, false)
         window.entries[key] = item
+        y = y - 36
     end
+    window:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    window:RegisterEvent("UI_SCALE_CHANGED")
+    window:SetScript("OnEvent", function(self) if self:IsShown() then FitWindow() end end)
     window:SetScript("OnHide", function()
         window:StopMovingOrSizing()
         local page = pages[Addon.currentOptionsPage]
@@ -408,6 +562,17 @@ function Addon:CreateOptions()
     self.options = pages.scaling
     pages.resources, pages.party, pages.pet = self:BuildResourceOptions()
     pages.swing = self:BuildSwingOptions()
+    pages.whispers = self:BuildWhisperOptions()
+    pages.loot = self:BuildLootOptions()
+    pages.vendorDeals = self:BuildVendorDealOptions()
+    for _, page in pairs(pages) do
+        page:HookScript("OnHide", function(self)
+            if self:GetAlpha() < 1 then
+                self:SetScript("OnUpdate", nil)
+                self:SetAlpha(1)
+            end
+        end)
+    end
     self:RefreshOptions(true)
     return true
 end
@@ -425,16 +590,18 @@ function Addon:ShowOptions(key)
     end
     if not self:CreateOptions() then return false end
     if not pages[key] then key = "scaling" end
+    local activePage = pages[key]
+    local entering = not activePage:IsVisible()
     self.currentOptionsPage = key
     for name, page in pairs(pages) do
         if name ~= key then page:Hide() end
-        window.entries[name]:SetBackdropBorderColor(unpack(name == key and gold or muted))
-        window.entries[name]:SetBackdropColor(name == key and 0.18 or 0.10, name == key and 0.16 or 0.13, 0.16, 1)
+        SelectButton(window.entries[name], name == key)
     end
     FitWindow()
     window:Show()
-    pages[key]:Show()
-    self:SetPageStatus(key, pages[key].defaultStatus or "")
+    activePage:Show()
+    if entering then Animate(activePage, 0.14, function(progress) activePage:SetAlpha(0.82 + 0.18 * progress) end) end
+    self:SetPageStatus(key, activePage.defaultStatus or "")
     return true
 end
 

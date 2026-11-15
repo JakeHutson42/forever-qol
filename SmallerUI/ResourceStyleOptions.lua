@@ -3,97 +3,118 @@ local formats = { { 0, "Hidden" }, { 1, "Current" }, { 2, "Current / maximum" },
     { 3, "Percentage" }, { 4, "Current + percentage" }, { 5, "Current / max + %" } }
 local fonts = { { 1, "Game default" }, { 2, "Arial" }, { 3, "Skurri" } }
 local alignments = { { 1, "Left" }, { 2, "Centre" }, { 3, "Right" } }
-local advancedTop = -236
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 
-local function PreviewBar(parent, y, height, value)
+local function PreviewBar(parent, scope, kind, value)
     local bar = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    bar:SetSize(218, height)
-    bar:SetPoint("TOPLEFT", 374, y)
-    if bar.SetRoundLayoutToNearestPixel then bar:SetRoundLayoutToNearestPixel(true) end
+    bar.resourceKind, bar.view, bar.sampleValue = kind, { scope = scope }, value
     bar.fill = CreateFrame("StatusBar", nil, bar)
     bar.fill:SetStatusBarTexture(WHITE)
     bar.fill:SetMinMaxValues(0, 100)
     bar.fill:SetValue(value)
-    bar.trimLayer = bar.fill
+    bar.trimLayer = CreateFrame("Frame", nil, bar)
+    bar.trimLayer:SetAllPoints()
+    bar.trimLayer:SetFrameLevel(bar.fill:GetFrameLevel() + 1)
+    bar.label = bar.trimLayer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    bar.label:SetText(kind == "health" and "Health" or "Power")
+    bar.valueText = bar.trimLayer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    bar.valueText:SetWordWrap(false)
+    bar.pulse = bar.fill:CreateTexture()
+    bar.pulse:Hide()
     return bar
 end
 
-local function RefreshPreview(bar, style, r, g, b)
+local function RefreshPreview(bar, sample, curved, x, y, r, g, b)
+    Addon:SetResourceBarCurved(bar, curved)
+    local size = sample[bar.resourceKind]
+    bar:SetSize(size.width, size.height)
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", x, y)
     local pixel = (PixelUtil and PixelUtil.GetPixelToUIUnitFactor() or 1) / bar:GetEffectiveScale()
     if pixel ~= bar.pixel then
         bar.pixel = pixel
         bar:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = pixel })
     end
-    local inset = style.border and pixel or 0
+    local inset = sample.style.border and not curved and pixel or 0
     bar.fill:ClearAllPoints()
     bar.fill:SetPoint("TOPLEFT", inset, -inset)
     bar.fill:SetPoint("BOTTOMRIGHT", -inset, inset)
-    bar.fill:SetStatusBarColor(r, g, b)
-    Addon:StyleResourceSurface(bar, style, false)
+    Addon:SetResourceFillColour(bar.fill, r, g, b)
+    Addon:StyleResourceBar(bar, sample, false)
+    -- Keep the sample readable without requiring the pointer to cover its controls.
+    Addon:SetResourceTextHovered(bar, true)
+    bar:SetMouseMotionEnabled(false)
+    Addon:RenderResourceText(bar, bar.sampleValue, 100, true)
 end
 
-function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearance)
+function Addon:BuildResourceStyleOptions(page, scope, prefix, look, text)
     local UI = self.OptionsUI
-    local host = CreateFrame("Frame", prefix .. "Styling", content)
-    host:SetPoint("TOPLEFT", 0, appearance)
-    host:SetWidth(620)
-    local text = CreateFrame("Frame", prefix .. "TextSettings", host)
-    text:SetPoint("TOPLEFT", 0, advancedTop)
-    text:SetSize(620, 224)
-    text:Hide()
-    local resources = CreateFrame("Frame", prefix .. "ResourceColours", host)
-    resources:SetSize(620, 116)
-    resources:Hide()
-    page.resourceToken = "MANA"
-    local sampleUnit = scope == "party" and "party1" or scope
-    if UnitExists(sampleUnit) then
-        local _, token = UnitPowerType(sampleUnit)
-        if Addon:IsResourceColourToken(token) then page.resourceToken = token end
-    end
+    local function Settings() return Addon:GetResourceSettings()[scope] end
+    local function Style() return Settings().style end
     local dropdowns, inputs = {}, {}
-    local function Settings() return Addon:GetResourceSettings()[scope].style end
-    local function Reflow()
-        local textHeight = text:IsShown() and 224 or 0
-        local height = -advancedTop + textHeight + (resources:IsShown() and 116 or 0)
-        host:SetHeight(height)
-        resources:ClearAllPoints()
-        resources:SetPoint("TOPLEFT", 0, advancedTop - textHeight)
-        content:SetHeight(-appearance + height + 12)
-        if page.tab == "appearance" then page.content:SetHeight(content:GetHeight()) end
+    local function Select(parent, key, caption, choices, labelX, x, y, width, swatch)
+        local setting = key:gsub("^%u", string.lower)
+        UI.Label(parent, caption, labelX, y - 7)
+        local dropdown = UI.Select(parent, prefix .. key, x, y, width, choices,
+            function() return Style()[setting] end,
+            function(value) Addon:SetResourceStyle(scope, setting, value) end, swatch)
+        dropdowns[#dropdowns + 1] = dropdown
+        return dropdown
     end
-    local function ColourButton(parent, name, label, x, y, kind, token)
-        local button = UI.Button(parent, prefix .. name, label, x, y, 180,
+    local function Switch(parent, key, name, caption, x, y, tip)
+        return UI.Switch(parent, prefix .. name, caption, x, y,
+            function(enabled) Addon:SetResourceStyle(scope, key, enabled) end, tip)
+    end
+    local function Input(parent, key, caption, labelX, x, y, low, high)
+        UI.Label(parent, caption, labelX, y - 7)
+        local input = CreateFrame("EditBox", prefix .. key, parent, "InputBoxTemplate")
+        input:SetPoint("TOPLEFT", x, y)
+        input:SetSize(70, 24)
+        input:SetAutoFocus(false)
+        input:SetMaxLetters(3)
+        local function Current() return Style()[key] end
+        local function Apply(value) return Addon:SetResourceStyle(scope, key, value) end
+        local function Restore(self) self:SetText(tostring(Current())); self:ClearFocus() end
+        input:SetScript("OnEnterPressed", function(self)
+            if not Apply(tonumber(self:GetText())) then
+                Addon:OptionsFeedback(string.format("Enter a whole number from %d to %d.", low, high), true)
+            else
+                Addon:OptionsFeedback("")
+            end
+            Restore(self)
+        end)
+        input:SetScript("OnEscapePressed", Restore)
+        UI.NumberArrows(input, 1, low, high, Current, Apply)
+        inputs[key] = input
+    end
+    local function ColourButton(parent, name, label, x, y, kind, token, width)
+        local button = UI.Button(parent, prefix .. name, label, x, y, width or 180,
             function() Addon:OpenResourceColourPicker(scope, kind, token and page.resourceToken or nil) end)
         button.swatch = button:CreateTexture(nil, "OVERLAY")
         button.swatch:SetSize(14, 14)
-        button.swatch:SetPoint("TOPLEFT", 156, -5)
+        button.swatch:SetPoint("RIGHT", -9, 0)
         return button
     end
-    UI.Label(host, "Theme preset", 12, -6)
-    local theme = UI.Select(host, prefix .. "Theme", 126, 0, 208, Addon.resourceThemes,
-        function() return Settings().theme end,
-        function(value)
-            Addon:CancelResourceColourPicker(scope)
-            Addon:ApplyResourceTheme(scope, value)
-        end)
+
+    local card = CreateFrame("Frame", nil, look, "BackdropTemplate")
+    card:SetPoint("TOPLEFT", 12, -2)
+    card:SetSize(596, 108)
+    UI.Plate(card)
+    UI.Label(card, "Preset & preview", 15, -13, "GameFontNormal")
+    local theme = UI.Select(card, prefix .. "Theme", 15, -38, 245, Addon.resourceThemes,
+        function() return Style().theme end,
+        function(value) Addon:CancelResourceColourPicker(scope); Addon:ApplyResourceTheme(scope, value) end)
     dropdowns[#dropdowns + 1] = theme
-    UI.Tooltip(theme, "Apply a texture, trim and palette to these bars. You can adjust each setting below.")
-    local healthPreview = PreviewBar(host, -4, 17, 78)
-    local powerPreview = PreviewBar(host, -26, 10, 61)
-    page.themeColours = UI.Switch(host, prefix .. "ThemeColours", "Apply preset colours", 4, -40,
-        function(enabled) Addon:SetResourceStyle(scope, "themeColours", enabled) end,
-        "When enabled, applying a preset replaces the bar, border, background and accent colours. Turn it off to keep your palette.")
-    page.border = UI.Switch(host, prefix .. "Border", "Bar borders", 4, -78,
-        function(enabled) Addon:SetResourceStyle(scope, "border", enabled) end,
-        "Hide the border around your bars. Edit mode still shows a temporary guide.")
-    page.border:SetWidth(208)
-    page.borderColour = ColourButton(host, "BorderColour", "Border colour", 224, -78, "borderColour")
-    page.trackColour = ColourButton(host, "TrackColour", "Background colour", 414, -78, "trackColour")
-    UI.Label(host, "Bar texture", 12, -122)
-    page.texture = UI.Select(host, prefix .. "BarTexture", 126, -116, 208, Addon.resourceTextures,
-        function() return Settings().barTexture end,
-        function(value) Addon:SetResourceStyle(scope, "barTexture", value) end,
+    UI.Tooltip(theme, "Apply a coordinated texture, trim and palette to these bars.")
+    page.themeColours = Switch(card, "themeColours", "ThemeColours", "Apply preset colours", 12, -70,
+        "Turn off to keep your custom palette when switching themes.")
+    page.themeColours:SetWidth(255)
+    local sample = { health = {}, power = {}, arc = { width = 30, gap = 112 } }
+    local healthPreview = PreviewBar(card, scope, "health", 78)
+    local powerPreview = PreviewBar(card, scope, "power", 61)
+
+    UI.Section(look, "Surface & feedback", -124)
+    page.texture = Select(look, "BarTexture", "Bar texture", Addon.resourceTextures, 12, 126, -155, 180,
         function(button, entry)
             local swatch = button:AttachTexture()
             swatch:SetPoint("RIGHT", -8, 0)
@@ -102,103 +123,123 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, content, appearanc
             swatch:SetVertexColor(Addon:GetResourceColour(scope, "health"))
             return 252, 22
         end)
-    dropdowns[#dropdowns + 1] = page.texture
-    UI.Label(host, "Trim", 350, -122)
-    local trim = UI.Select(host, prefix .. "Trim", 414, -116, 180, Addon.resourceTrims,
-        function() return Settings().trim end,
-        function(value) Addon:SetResourceStyle(scope, "trim", value) end)
-    dropdowns[#dropdowns + 1] = trim
-    UI.Tooltip(trim, "Choose the decoration on the bar border. Jewels scale down on thin bars.")
-    UI.Label(host, "Motion", 12, -160)
-    local motion = UI.Select(host, prefix .. "Motion", 126, -154, 208, Addon.resourceMotion,
-        function() return Settings().motion end,
-        function(value) Addon:SetResourceStyle(scope, "motion", value) end)
-    dropdowns[#dropdowns + 1] = motion
-    UI.Tooltip(motion, "Choose Off for static bars, Subtle for a short flash, Fluid for softer trails, or Vivid for stronger feedback on damage, healing and power spent. Live values update immediately.")
-    page.accentColour = ColourButton(host, "AccentColour", "Accent colour", 414, -154, "accentColour")
-    local textToggle, resourceToggle
-    textToggle = UI.Button(host, prefix .. "TextToggle", "Text settings...", 12, -196, 180, function()
-        text:SetShown(not text:IsShown())
-        textToggle:SetText(text:IsShown() and "Hide text settings" or "Text settings...")
-        Reflow()
-    end)
-    resourceToggle = UI.Button(host, prefix .. "ResourceColoursToggle", "Resource colours...", 208, -196, 180, function()
+    local motion = Select(look, "Motion", "Motion", Addon.resourceMotion, 328, 430, -155, 176)
+    UI.Tooltip(motion, "Choose how strongly the bars flash or trail when values change.")
+    Select(look, "Trim", "Edge detail", Addon.resourceTrims, 12, 126, -192, 180)
+    page.border = Switch(look, "border", "Border", "Show frame", 320, -192)
+    Input(look, "backgroundOpacity", "Track opacity %", 12, 126, -230, 0, 100)
+    if scope == "player" then
+        page.smooth = UI.Switch(look, prefix .. "Smooth", "Animate change trail", 320, -230,
+            function(enabled) Addon:SetResourceOption("root", "smooth", enabled) end,
+            "Animate the trailing fill. Current health and power update immediately.")
+    end
+
+    UI.Section(look, "Palette", -274)
+    page.healthColour = ColourButton(look, "healthColour", "Health colour", 12, -305, "health")
+    page.powerColour = ColourButton(look, "powerColour", "Power colour", 208, -305, "power")
+    UI.Button(look, prefix .. "ResetColours", "Reset palette", 404, -305, 202, function()
         Addon:CancelResourceColourPicker(scope)
-        resources:SetShown(not resources:IsShown())
-        resourceToggle:SetText(resources:IsShown() and "Hide resource colours" or "Resource colours...")
-        Reflow()
+        Addon:ResetResourceColours(scope)
+        Addon:OptionsFeedback("Default palette restored.")
     end)
-    local function Select(key, label, choices, x, y, labelX, width)
-        UI.Label(text, label, labelX, y - 6)
-        local dropdown = UI.Select(text, prefix .. key, x, y, width or 164, choices,
-            function() return Settings()[key] end, function(value) Addon:SetResourceStyle(scope, key, value) end)
-        dropdowns[#dropdowns + 1] = dropdown
+    page.powerByType = UI.Switch(look, prefix .. "PowerByType", "Match power type", 4, -342, function(enabled)
+        Addon:CancelResourceColourPicker(scope)
+        Addon:SetResourcePowerByType(scope, enabled)
+    end, "Use Mana, Rage, Energy, Focus and other resource colours.")
+    page.borderColour = ColourButton(look, "BorderColour", "Frame colour", 12, -380, "borderColour")
+    page.trackColour = ColourButton(look, "TrackColour", "Track colour", 208, -380, "trackColour")
+    page.accentColour = ColourButton(look, "AccentColour", "Accent colour", 404, -380, "accentColour", nil, 202)
+
+    local resources = CreateFrame("Frame", prefix .. "ResourceColours", look)
+    resources:SetPoint("TOPLEFT", 0, -429)
+    resources:SetSize(620, 84)
+    resources:Hide()
+    page.resourceToken = "MANA"
+    local unit = scope == "party" and "party1" or scope
+    if UnitExists(unit) then
+        local _, token = UnitPowerType(unit)
+        if Addon:IsResourceColourToken(token) then page.resourceToken = token end
     end
-    Select("healthFormat", "Health text", formats, 148, 0, 12)
-    Select("powerFormat", "Power text", formats, 432, 0, 328)
-    Select("font", "Font", fonts, 148, -42, 12)
-    Select("alignment", "Alignment", alignments, 148, -90, 12)
-    local function Input(key, label, x, y, labelX, low, high)
-        UI.Label(text, label, labelX, y - 6)
-        local input = CreateFrame("EditBox", prefix .. key, text, "InputBoxTemplate")
-        input:SetPoint("TOPLEFT", x, y)
-        input:SetSize(72, 24)
-        input:SetAutoFocus(false)
-        input:SetMaxLetters(3)
-        input:SetScript("OnEnterPressed", function(self)
-            if not Addon:SetResourceStyle(scope, key, tonumber(self:GetText())) then
-                Addon:OptionsFeedback("Enter a whole number from " .. low .. " to " .. high .. ".", true)
-            end
-            self:SetText(tostring(Settings()[key]))
-            self:ClearFocus()
-        end)
-        input:SetScript("OnEscapePressed", function(self) self:SetText(tostring(Settings()[key])); self:ClearFocus() end)
-        UI.NumberArrows(input, 1, low, high, function() return Settings()[key] end,
-            function(value) return Addon:SetResourceStyle(scope, key, value) end)
-        inputs[key] = input
-    end
-    Input("fontSize", "Text size", 432, -42, 328, 6, 48)
-    page.autoFontSize = UI.Switch(text, prefix .. "AutoFontSize", "Automatic size", 320, -78,
-        function(enabled) Addon:SetResourceStyle(scope, "autoFontSize", enabled) end)
-    page.shortNumbers = UI.Switch(text, prefix .. "ShortNumbers", "Short numbers (12.3k)", 4, -132,
-        function(enabled) Addon:SetResourceStyle(scope, "shortNumbers", enabled) end,
-        "Use compact numbers when public values are available. Exact native values remain in restricted contexts.")
-    page.textColour = ColourButton(text, "TextColour", "Text colour", 328, -130, "textColour")
-    Input("backgroundOpacity", "Background %", 148, -178, 12, 0, 100)
-    UI.Label(resources, "Resource", 12, -6)
-    page.resourceSelect = UI.Select(resources, prefix .. "ResourceToken", 148, 0, 164,
+    local resourceToggle = UI.Button(look, prefix .. "ResourceColoursToggle", "Edit type colours", 328, -342, 180, function(button)
+        Addon:CancelResourceColourPicker(scope)
+        local open = not resources:IsShown()
+        resources:SetShown(open)
+        button:SetText(open and "Hide type colours" or "Edit type colours")
+        look:SetHeight(open and 507 or 426)
+        page.content:SetHeight(look:GetHeight())
+    end)
+    UI.Tooltip(resourceToggle, "Override the colour of an individual power type.")
+    UI.Label(resources, "Resource", 12, -7)
+    page.resourceSelect = UI.Select(resources, prefix .. "ResourceToken", 126, 0, 180,
         function() return Addon:GetResourceColourChoices(page.resourceToken) end,
         function() return page.resourceToken end,
         function(token) Addon:CancelResourceColourPicker(scope); page.resourceToken = token; Addon:RefreshResourceOptions() end)
     page.resourceColour = ColourButton(resources, "ResourceColour", "Resource colour", 328, 0, "power", true)
-    UI.Button(resources, prefix .. "ResetResourceColour", "Use default colour", 328, -42, 180, function()
+    UI.Button(resources, prefix .. "ResetResourceColour", "Use default colour", 328, -36, 180, function()
         Addon:CancelResourceColourPicker(scope)
         Addon:SetResourcePowerOverride(scope, page.resourceToken, nil)
     end)
+
+    UI.Section(text, "Bar text", 0)
+    page.values = UI.Switch(text, prefix .. "Values", "Show bar values", 4, -30,
+        function(enabled) Addon:SetResourceOption(scope, "values", enabled) end)
+    Select(text, "healthFormat", "Health text", formats, 12, 126, -72, 180)
+    Select(text, "powerFormat", "Power text", formats, 328, 430, -72, 176)
+    page.healthTextOnHover = Switch(text, "healthTextOnHover", "healthTextOnHover", "Health text on hover", 4, -106)
+    page.powerTextOnHover = Switch(text, "powerTextOnHover", "powerTextOnHover", "Power text on hover", 320, -106)
+    UI.Section(text, "Typography", -150)
+    Select(text, "font", "Font", fonts, 12, 126, -181, 180)
+    Select(text, "alignment", "Alignment", alignments, 328, 430, -181, 176)
+    Input(text, "fontSize", "Text size", 12, 126, -218, 6, 48)
+    page.autoFontSize = Switch(text, "autoFontSize", "AutoFontSize", "Automatic size", 320, -218)
+    page.shortNumbers = Switch(text, "shortNumbers", "ShortNumbers", "Short numbers (12.3k)", 4, -257,
+        "Use compact numbers when the game makes readable values available.")
+    page.textColour = ColourButton(text, "TextColour", "Text colour", 328, -257, "textColour")
+    text:SetScript("OnHide", function()
+        Addon:CancelResourceColourPicker(scope)
+        inputs.fontSize:ClearFocus()
+    end)
+    look:SetScript("OnHide", function()
+        Addon:CancelResourceColourPicker(scope)
+        inputs.backgroundOpacity:ClearFocus()
+    end)
+    look:SetScript("OnShow", function()
+        if look:IsVisible() then page:RefreshStyling() end
+    end)
+
     function page:RefreshStyling(syncInput)
-        local style = Settings()
+        local settings, style = Settings(), Style()
         self.border:SetChecked(style.border)
         self.themeColours:SetChecked(style.themeColours)
-        RefreshPreview(healthPreview, style, Addon:GetResourceColour(scope, "health"))
-        RefreshPreview(powerPreview, style, Addon:GetResourceColour(scope, "power"))
         self.autoFontSize:SetChecked(style.autoFontSize)
         self.shortNumbers:SetChecked(style.shortNumbers)
-        local border, colour = style.borderColour, style.textColour
-        self.borderColour.swatch:SetColorTexture(border.r, border.g, border.b)
-        self.textColour.swatch:SetColorTexture(colour.r, colour.g, colour.b)
-        local track, accent = style.trackColour, style.accentColour
-        self.trackColour.swatch:SetColorTexture(track.r, track.g, track.b)
-        self.accentColour.swatch:SetColorTexture(accent.r, accent.g, accent.b)
+        self.healthTextOnHover:SetChecked(style.healthTextOnHover)
+        self.powerTextOnHover:SetChecked(style.powerTextOnHover)
+        if look:IsVisible() then
+            local curved = settings.curved == true
+            sample.style, sample.values = style, settings.values
+            sample.health.width, sample.health.height = curved and 30 or 278, curved and 53 or math.min(26, settings.health.height)
+            sample.power.width, sample.power.height = curved and 30 or 278, curved and 53 or math.min(22, settings.power.height)
+            RefreshPreview(healthPreview, sample, curved, curved and 367 or 302, curved and -30 or -32,
+                Addon:GetResourceColour(scope, "health"))
+            RefreshPreview(powerPreview, sample, curved, curved and 487 or 302, curved and -30 or -37 - sample.health.height,
+                Addon:GetResourceColour(scope, "power"))
+        end
+        for name in pairs(Addon.resourceStyleColours) do
+            local color = style[name]
+            self[name].swatch:SetColorTexture(color.r, color.g, color.b)
+        end
         self.resourceColour.swatch:SetColorTexture(Addon:GetResourceColour(scope, "power", self.resourceToken))
         inputs.fontSize:SetEnabled(not style.autoFontSize)
         inputs.fontSize.up:SetEnabled(not style.autoFontSize)
         inputs.fontSize.down:SetEnabled(not style.autoFontSize)
         inputs.fontSize:SetAlpha(style.autoFontSize and 0.45 or 1)
-        for key, input in pairs(inputs) do if syncInput then input:SetText(tostring(style[key])) end end
+        if syncInput then
+            for key, input in pairs(inputs) do input:SetText(tostring(style[key])) end
+        end
         if self:IsShown() then
             for _, dropdown in ipairs(dropdowns) do dropdown:GenerateMenu() end
             self.resourceSelect:GenerateMenu()
         end
     end
-    Reflow()
 end

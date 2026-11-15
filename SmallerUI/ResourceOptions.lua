@@ -144,7 +144,7 @@ function Addon:BuildResourceOptions()
         end
         local display = Panel(player and 478 or 284)
         local layout = Panel(scope == "party" and 360 or player and Addon:IsPaladin() and 424 or 306)
-        local appearancePanel = Panel(340)
+        local appearancePanel, textPanel = Panel(426), Panel(300)
         local content = display
         local function Notice(text, error) Addon:OptionsFeedback(text, error, key) end
         local function Switch(name, label, x, y, settingScope, setting, tip, parent)
@@ -292,37 +292,7 @@ function Addon:BuildResourceOptions()
             combatOpacity = OpacitySlider("combatOpacity", "In-combat opacity", 12),
             outOfCombatOpacity = OpacitySlider("outOfCombatOpacity", "Out-of-combat opacity", 320),
         }
-        content = appearancePanel
-        local appearance = 0
-        UI.Section(content, "Bar style", appearance)
-        page.values = Switch("Values", "Show bar values", 12, -34, scope, "values")
-        if player then
-            page.smooth = Switch("Smooth", "Animate change trail", 314, -34, "root", "smooth",
-                "Animate the trail behind each bar. Live values update immediately.")
-        end
-        local function ColourButton(kind, label, x)
-            local button = UI.Button(content, prefix .. kind .. "Colour", label, x, appearance - 72, 180,
-                function() Addon:OpenResourceColourPicker(scope, kind) end)
-            button.swatch = button:CreateTexture(nil, "OVERLAY")
-            button.swatch:SetSize(14, 14)
-            button.swatch:SetPoint("TOPLEFT", 156, -5)
-            UI.Tooltip(button, kind == "health" and "Choose your health bar colour. Incoming healing uses lighter shades of this colour."
-                or "Choose a custom power bar colour for this display. This switches off automatic power-type colouring until you enable it again.")
-            return button
-        end
-        page.healthColour = ColourButton("health", "Health colour", 12)
-        page.powerColour = ColourButton("power", "Power colour", 208)
-        UI.Button(content, prefix .. "ResetColours", "Reset colours", 408, appearance - 72, 164, function()
-            Addon:CancelResourceColourPicker(scope)
-            Addon:ResetResourceColours(scope)
-            Notice("Default colours restored: red health and power-type colours.")
-        end)
-        page.powerByType = UI.Switch(content, prefix .. "PowerByType", "Use power-type colours", 4, appearance - 106,
-            function(enabled)
-                Addon:CancelResourceColourPicker(scope)
-                Addon:SetResourcePowerByType(scope, enabled)
-            end, "Automatically colour Mana, Rage, Energy, Focus and other resources to match their type. Uncheck to use your custom power colour.")
-        Addon:BuildResourceStyleOptions(page, scope, prefix, appearancePanel, -142)
+        Addon:BuildResourceStyleOptions(page, scope, prefix, appearancePanel, textPanel)
         content = display
         if player then
             local forecasts = -252
@@ -372,7 +342,7 @@ function Addon:BuildResourceOptions()
             end
         end
         UI.Tabs(page, { { "display", "Display", display }, { "layout", "Layout", layout },
-            { "appearance", "Appearance", appearancePanel } })
+            { "appearance", "Appearance", appearancePanel }, { "text", "Text", textPanel } })
         page:SetScript("OnShow", function()
             Addon.currentOptionsPage = key
             Addon:OptionsFeedback("", false, key)

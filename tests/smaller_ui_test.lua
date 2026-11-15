@@ -48,6 +48,14 @@ local function boot(saved, characterSaved, compatibility)
         function widget:RegisterUnitEvent(value, unit) self.events[value] = unit end
         function widget:UnregisterEvent(value) self.events[value] = nil end
         function widget:SetScript(value, callback) self.scripts[value] = callback end
+        function widget:GetScript(value) return self.scripts[value] end
+        function widget:HookScript(value, callback)
+            local previous = self.scripts[value]
+            self:SetScript(value, function(...)
+                if previous then previous(...) end
+                callback(...)
+            end)
+        end
         function widget:GetParent() return self.parent end
         function widget:GetScale() return name == "UIParent" and state.scale or self.scale end
         function widget:GetEffectiveScale()
@@ -119,8 +127,16 @@ local function boot(saved, characterSaved, compatibility)
         function widget:SetSize(width, height) self.width, self.height = width, height end
         function widget:GetSize() return self:GetWidth(), self:GetHeight() end
         function widget:SetFontString(label) self.label = label end
+        function widget:SetFontObject() end
+        function widget:SetTextInsets() end
         function widget:GetHighlightTexture() return Widget(nil, self) end
+        function widget:GetPushedTexture() return Widget(nil, self) end
         function widget:SetVerticalScroll(value) self.scrollPosition = value end
+        function widget:GetVerticalScroll() return self.scrollPosition or 0 end
+        function widget:GetVerticalScrollRange() return math.max(0, self.scrollHeight or 0) end
+        function widget:UpdateScrollChildRect() end
+        function widget:GetStringHeight() return 13 end
+        function widget:EnableMouseWheel() end
         function widget:SetWidth(width) self.width = width end
         function widget:SetHeight(height) self.height = height end
         function widget:GetWidth()
@@ -141,6 +157,9 @@ local function boot(saved, characterSaved, compatibility)
         end
         function widget:IsVisible() return self.shown and (not self.parent or self.parent:IsVisible()) end
         function widget:SetEnabled(value) self.enabled = value end
+        function widget:IsEnabled() return self.enabled ~= false end
+        function widget:EnableKeyboard(value) self.keyboardEnabled = value end
+        function widget:SetPropagateKeyboardInput(value) self.propagateKeys = value end
         function widget:SetAlpha(value) self.alpha = value end
         function widget:GetAlpha() return self.alpha or 1 end
         function widget:SetStatusBarColor(r, g, b, alpha) self.barColor = { r, g, b, alpha or 1 } end
@@ -206,7 +225,12 @@ local function boot(saved, characterSaved, compatibility)
         end
         function widget:SetOrientation(value) self.orientation = value end
         function widget:SetRotatesTexture(value) self.rotatesTexture = value end
-        function widget:EnableMouse(value) self.mouseEnabled = value end
+        function widget:SetMouseClickEnabled(value) self.mouseEnabled = value end
+        function widget:SetMouseMotionEnabled(value) self.mouseMotionEnabled = value end
+        function widget:EnableMouse(value)
+            self:SetMouseClickEnabled(value)
+            self:SetMouseMotionEnabled(value)
+        end
         function widget:SetTexture(value) self.textureValue = value end
         function widget:SetDesaturated(value) self.desaturated = value end
         function widget:SetClipsChildren(value) self.clipsChildren = value end
@@ -235,6 +259,8 @@ local function boot(saved, characterSaved, compatibility)
         return widget
     end
     env.SmallerUIDB = saved
+    env.date = os.date
+    env.time = os.time
     env.SmallerUICharDB = characterSaved
     env.CreateFrame = function(kind, name, parent, template)
         local widget = Widget(name, parent)
@@ -575,6 +601,51 @@ check(panel:IsVisible() and env.SmallerUISettings:IsShown() and state.addon.curr
 check(env.UISpecialFrames[1] == "SmallerUISettings", "Escape can close the standalone window")
 command("")
 check(env.SmallerUIOptions == panel and #state.categories == 0, "Opening settings reuses the same window")
+do
+    local compactEnv, compact, compactEvent, compactTick = boot(nil)
+    local compactAddon, settings = compact.addon, compactEnv.SmallerUISettings
+    compact.geometry = true
+    compactEnv.UIParent:SetScale(1)
+    local rootScale = compactEnv.UIParent:GetEffectiveScale()
+    compactEnv.UIParent:SetSize(1200 / rootScale, 620 / rootScale)
+    compactAddon:ShowOptions("scaling")
+    local scalePage = compactEnv.SmallerUIOptions
+    check(settings:GetScale() == 1 and settings:GetHeight() == 596
+        and scalePage.scroll:GetHeight() < scalePage.content:GetHeight(),
+        "Compact settings use a shorter scroll viewport at full scale")
+    compactEnv.UIParent:SetSize(1200 / rootScale, 570 / rootScale)
+    compactEvent("DISPLAY_SIZE_CHANGED")
+    local _, moveBottom = compactEnv.SmallerUISettingsMove:GetRect()
+    local _, settingsBottom = settings:GetRect()
+    check(settings:GetScale() == 1 and settings:GetHeight() == 546
+        and math.abs(moveBottom - settingsBottom - 53) < 0.00001,
+        "Resizing a visible settings window keeps Move Mode anchored above the footer")
+    compactEnv.UIParent:SetSize(740 / rootScale, 450 / rootScale)
+    compactEvent("DISPLAY_SIZE_CHANGED")
+    check(settings:GetScale() < 1 and settings:GetWidth() * settings:GetScale() <= 716.001
+        and settings:GetHeight() * settings:GetScale() <= 426.001,
+        "The settings window fits a viewport that requires scaling")
+    compact.Click(settings.entries.resources)
+    local resourcesPage = compactEnv.SmallerUIPersonalOptions
+    check(resourcesPage:IsVisible() and not scalePage:IsShown() and not scalePage.scripts.OnUpdate
+        and resourcesPage:GetAlpha() < 1 and settings.entries.resources.marker:IsShown()
+        and not settings.entries.scaling.marker:IsShown(), "The active page and navigation marker update together")
+    compactTick(0.16)
+    check(resourcesPage:GetAlpha() == 1 and not resourcesPage.scripts.OnUpdate,
+        "The page transition settles and stops updating")
+    local toggle = compactEnv.SmallerUIPersonalEnabled
+    local start = toggle.thumbOffset
+    compact.Click(toggle)
+    compactTick(0.05)
+    check(toggle:GetChecked() and toggle.thumbOffset > start and toggle.thumbOffset < 20,
+        "Switch state changes immediately while the thumb slides")
+    compactTick(0.12)
+    check(toggle.thumbOffset == 20 and not toggle.scripts.OnUpdate, "Switch feedback finishes without a running animation")
+    compact.Click(settings.entries.whispers)
+    compact.Click(compactEnv.SmallerUIWhisperPopups)
+    check(compactEnv.SmallerUIPartyAlertOptions:IsVisible() and not settings:IsShown(),
+        "Whisper Manager links to the chat pop-up settings")
+end
 check(env.SmallerUIGlobalSlider.template == "UISliderTemplateWithLabels", "Global slider uses the labelled template")
 check(env.SmallerUIKeep_minimap and env.SmallerUIElementInput_minimap, "Minimap size is adjustable")
 env.SmallerUIElementInput_chat:SetText("1.25")
@@ -582,6 +653,7 @@ env.SmallerUIGlobalSlider:SetValue(0.4)
 check(state.writes == 0 and not env.SmallerUIDB.enabled, "Slider edits a draft until Apply")
 state.Click(env.SmallerUIGlobalApply)
 near(state.scale, 0.4, "Global Apply uses slider draft")
+near(env.SmallerUISettings:GetEffectiveScale(), 0.4, "An open settings window follows the newly applied UI scale")
 check(state.addon.currentOptionsPage == "scaling", "Applying scale keeps the standalone settings page open")
 check(env.SmallerUIElementInput_chat:GetText() == "1.25", "Applying global scale preserves unfinished element edits")
 env.SmallerUIGlobalInput:SetText("0.3333")
@@ -1722,11 +1794,11 @@ do
     local bar = styleHud.player.health
     styleEnv.SmallerUIPersonalOptions:SelectTab("appearance")
     local originalHeight = styleEnv.SmallerUIPersonalOptions.content:GetHeight()
-    check(not styleEnv.SmallerUIPersonalTextSettings:IsShown() and not styleEnv.SmallerUIPersonalResourceColours:IsShown(),
-        "Advanced text and resource-colour controls start collapsed")
-    styleState.Click(styleEnv.SmallerUIPersonalTextToggle)
-    check(styleEnv.SmallerUIPersonalTextSettings:IsShown() and styleEnv.SmallerUIPersonalOptions.content:GetHeight() == originalHeight + 224,
-        "Opening text controls reflows following sections without overlapping")
+    check(not styleEnv.SmallerUIPersonalhealthFormat:IsVisible() and not styleEnv.SmallerUIPersonalResourceColours:IsShown(),
+        "Appearance starts with the palette overrides collapsed and text on its own tab")
+    styleEnv.SmallerUIPersonalOptions:SelectTab("text")
+    check(styleEnv.SmallerUIPersonalhealthFormat:IsVisible() and styleEnv.SmallerUIPersonalpowerTextOnHover:IsVisible(),
+        "The Text tab opens directly to formats and hover controls")
     styleState.units.player.health, styleState.units.player.maximum = 420, 1000
     styleEvent("UNIT_HEALTH", "player")
     local calls = bar.fill.valueCalls
@@ -1756,6 +1828,7 @@ do
     styleState.PickColour(0.8, 0.9, 0.3)
     styleEnv.ColorPickerFrame:OnOkay()
     check(bar.valueText.textColor[1] == 0.8 and bar.label.textColor[3] == 0.3, "Text colour applies consistently to values and labels")
+    styleEnv.SmallerUIPersonalOptions:SelectTab("appearance")
     styleState.Click(styleEnv.SmallerUIPersonalBorder)
     check(bar.borderColor[4] == 0 and styleHud.player.power.borderColor[4] == 0,
         "The border around both bars can be removed without changing bar dimensions")
@@ -1767,6 +1840,7 @@ do
     styleEnv.SmallerUIPersonalbackgroundOpacity:SetText("40")
     styleEnv.SmallerUIPersonalbackgroundOpacity.scripts.OnEnterPressed(styleEnv.SmallerUIPersonalbackgroundOpacity)
     check(bar.backgroundColor[4] == 0.4, "Bar background opacity is independently configurable")
+    styleEnv.SmallerUIPersonalOptions:SelectTab("text")
     styleState.units.player.health, styleState.units.player.maximum = 12345, 20000
     styleEvent("UNIT_HEALTH", "player")
     styleState.Click(styleEnv.SmallerUIPersonalShortNumbers)
@@ -1790,10 +1864,11 @@ do
     check(bar.valueText:GetText() == "Dead", "Styling changes preserve death/offline status text")
     styleState.units.player.dead = false
     styleEvent("UNIT_HEALTH", "player")
+    styleEnv.SmallerUIPersonalOptions:SelectTab("appearance")
     styleState.Click(styleEnv.SmallerUIPersonalResourceColoursToggle)
     check(styleEnv.SmallerUIPersonalResourceColours:IsShown()
-        and styleEnv.SmallerUIPersonalOptions.content:GetHeight() == originalHeight + 340,
-        "Resource override controls expand below the text controls without hiding subsequent settings")
+        and styleEnv.SmallerUIPersonalOptions.content:GetHeight() > originalHeight,
+        "Resource override controls expand at the end of the palette")
     styleState.Select(styleEnv.SmallerUIPersonalResourceToken, "ENERGY")
     styleState.Click(styleEnv.SmallerUIPersonalResourceColour)
     styleState.PickColour(0.3, 0.8, 0.9)
@@ -1841,6 +1916,62 @@ do
     check(not styleAddon:SetResourceStyle("player", "healthFormat", 99)
         and not styleAddon:SetResourceStyle("player", "fontSize", 12.5)
         and not styleAddon:SetResourcePowerOverride("player", "BAD1", 1, 0, 0), "Invalid style values and resource tokens are rejected")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    addon:SetResourceOption("root", "enabled", true)
+    addon:ShowOptions("resources")
+    env.SmallerUIPersonalOptions:SelectTab("text")
+    local hud = addon:GetResourceDisplay()
+    local health, power = hud.player.health, hud.player.power
+    check(health.valueText:IsShown() and not health.mouseMotionEnabled,
+        "Existing settings show text by default without mouse handling")
+    state.Select(env.SmallerUIPersonalhealthFormat, 3)
+    state.Click(env.SmallerUIPersonalhealthTextOnHover)
+    check(health.mouseMotionEnabled and not health.mouseEnabled and not health.valueText:IsShown()
+        and power.valueText:IsShown() and not power.mouseMotionEnabled,
+        "Health hover is independent of power and preserves click-through")
+    health.scripts.OnEnter(health)
+    state.units.player.health = 420
+    event("UNIT_HEALTH", "player")
+    check(health.valueText:IsShown() and health.valueText:GetText() == "42%" and health.label:IsShown(),
+        "Hovered text uses the selected format and updates with the live value")
+    health.scripts.OnLeave(health)
+    check(not health.valueText:IsShown() and not health.label:IsShown(), "Leaving hides the value and label")
+    state.Click(env.SmallerUIPersonalpowerTextOnHover)
+    power.scripts.OnEnter(power)
+    check(power.valueText:IsShown() and not health.valueText:IsShown(), "Only the hovered bar reveals text")
+    addon:SetResourceBarEnabled("player", "power", false)
+    addon:SetResourceBarEnabled("player", "power", true)
+    check(not power.valueText:IsShown(), "Hiding the bar clears its previous hover state")
+    state.Select(env.SmallerUIPersonalpowerFormat, 0)
+    check(not power.mouseMotionEnabled and not power.valueText:IsShown(), "The hidden format takes precedence over hover")
+    addon:SetResourceOption("player", "values", false)
+    check(not health.mouseMotionEnabled and not health.valueText:IsShown(), "Show bar values also controls hover text")
+    addon:SetResourceOption("player", "values", true)
+    check(addon:BeginResourceEdit() and health.mouseEnabled and health.valueText:IsShown(),
+        "Move Mode previews hover text and accepts clicks")
+    addon:FinishResourceEdit(true)
+    addon:SetResourceOption("player", "curved", true)
+    health.scripts.OnEnter(health)
+    check(not health.mouseEnabled and health.valueText:IsShown() and health.label:IsShown(),
+        "The curved HUD also reveals text on hover")
+    health.scripts.OnLeave(health)
+    check(not health.valueText:IsShown() and not health.label:IsShown(), "Curved HUD text hides on leave")
+
+    state.units.party1 = { health = 100, maximum = 100, power = 50, powerMax = 100, token = "MANA", name = "Friend" }
+    addon:SetResourceOption("root", "partyEnabled", true)
+    addon:SetResourceStyle("party", "powerTextOnHover", true)
+    local partyPower = hud.party[1].power
+    partyPower.scripts.OnEnter(partyPower)
+    check(partyPower.valueText:IsShown() and partyPower.valueText:GetText() == "50 / 100",
+        "Hover text works on the default thin party power bar")
+    local _, restored = boot(nil, env.SmallerUICharDB)
+    local saved = restored.addon:GetResourceSettings()
+    check(saved.player.style.healthTextOnHover and saved.party.style.powerTextOnHover and not saved.pet.style.powerTextOnHover,
+        "Hover settings persist independently for each display")
 end
 
 do
@@ -2237,7 +2368,7 @@ do
     addon:ShowOptions("resources")
     local hud = addon:GetResourceDisplay()
     local cfg = addon:GetResourceSettings()
-    check(hud.player:IsVisible() and hud.player:GetAlpha() == 1 and cfg.player.style.barTexture == 1,
+    check(hud.player:IsVisible() and hud.player:GetAlpha() == 1 and cfg.player.style.barTexture == 11,
         "Existing layouts default to visible, fully opaque flat bars")
     env.SmallerUIPersonalcombatOpacity:SetValue(68)
     env.SmallerUIPersonaloutOfCombatOpacity:SetValue(25)
@@ -2283,7 +2414,7 @@ do
         and hud.player.health.forecasts.direct._points[1][2] == fillTexture
         and hud.player.health.fill:GetInterpolatedValue() == 321,
         "Changing texture preserves the live value and incoming-heal anchor")
-    check(hud.pet.health.fill:GetStatusBarTexture().textureValue == addon.resourceTextures[1][3],
+    check(hud.pet.health.fill:GetStatusBarTexture().textureValue == addon.resourceTextures[cfg.pet.style.barTexture][3],
         "Texture changes stay on the selected display")
     local _, restored = boot(nil, env.SmallerUICharDB)
     local style = restored.addon:GetResourceSettings().player.style
@@ -2368,7 +2499,7 @@ do
         and health.trim.line:IsShown() and health.trim.left:IsShown(),
         "Warlock preset applies the generated surface and jewelled trim")
     check(health.fill.barColor[3] > health.fill.barColor[2] and power.fill.barColor[2] > power.fill.barColor[3]
-        and cfg.party.style.theme == 1 and cfg.pet.style.theme == 1,
+        and cfg.party.style.theme == addon:DefaultResourceStyle().theme and cfg.pet.style.theme == addon:DefaultResourceStyle().theme,
         "Applying a preset changes the selected display's palette only")
     state.Click(env.SmallerUIPersonalThemeColours)
     local violet = health.fill.barColor[3]
@@ -2377,7 +2508,7 @@ do
         and not health.trim.left:IsShown() and health.trim.line:IsShown(),
         "Presets can replace artwork and trim while retaining custom colours")
     state.Select(env.SmallerUIPersonalTrim, 1)
-    check(not health.trim.line:IsShown(), "Selecting plain trim removes the decoration immediately")
+    check(not health.trim.left:IsShown() and health.trim.line:IsShown(), "Plain trim keeps the frame bevel and hides the jewels")
     state.Select(env.SmallerUIPersonalMotion, 3)
     state.units.player.health = 510
     event("UNIT_HEALTH", "player")
@@ -2463,6 +2594,574 @@ do
         and state.addon.currentOptionsPage == "swing", "Cancel restores the timer position and returns to its settings")
     local noSwingEnv = boot(nil, nil, { noEventMetadata = true })
     check(noSwingEnv.SmallerUISwingEnabled.enabled == false, "Unavailable swing events leave the feature disabled")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    env.GetNormalizedRealmName = function() return "Forever" end
+    addon:ShowOptions("whispers")
+    check(env.SmallerUIWhisperOptions:IsVisible() and not env.SmallerUIWhisperBar,
+        "Whisper Manager has a settings page and creates the bar on demand")
+    event("CHAT_MSG_WHISPER", "Hello", "Vale-Forever")
+    event("CHAT_MSG_WHISPER_INFORM", "Hi", "Vale")
+    event("CHAT_MSG_WHISPER", "Ready?", "Vale-Forever")
+    local bar = env.SmallerUIWhisperBar
+    local slot, count = nil, 0
+    for _, widget in ipairs(state.widgets) do
+        if widget.parent == bar and widget.thread then slot, count = widget, count + 1 end
+    end
+    check(count == 1 and slot.badge:IsShown() and slot.badge.count:GetText() == "2",
+        "Whisper directions share a contact and only incoming messages increment unread")
+    state.Click(slot)
+    local chat = env.SmallerUIWhisperChat
+    check(chat:IsShown() and chat.rows[2].label:GetText() == "Hi" and not slot.badge:IsShown(),
+        "Opening a conversation displays both directions and clears its badge")
+    event("CHAT_MSG_WHISPER", "Let's go", "Vale")
+    check(chat.rows[4].label:GetText() == "Let's go" and not slot.badge:IsShown(),
+        "Incoming whispers append to an open conversation")
+    state.Select(env.SmallerUIWhisper_position, "right")
+    check(bar._points[1][3] == "TOPRIGHT" and bar:GetHeight() > bar:GetWidth(),
+        "Right docking reorients the bar vertically")
+    bar.grip.scripts.OnDragStart()
+    bar.grip.scripts.OnDragStop()
+    check(addon:GetWhisperSettings().position == "free", "Dragging saves free placement")
+    state.Click(env.SmallerUIWhisper_enabled)
+    check(not bar:IsShown() and not chat:IsShown(), "Disabling Whisper Manager hides the bar and conversation")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    env.GetNormalizedRealmName = function() return "Forever" end
+    env.GetUnitName = function(unit) if unit == "NPC" then return "Vale-Forever" end end
+    env.ERR_TRADE_COMPLETE = "Trade complete."
+    env.GetTradePlayerItemInfo = function(slot) if slot == 1 then return "Runecloth", 1, 2 end end
+    env.GetPlayerTradeMoney = function() return 0 end
+    env.GetTargetTradeMoney = function() return 10203 end
+
+    event("TRADE_REQUEST", "Vale")
+    local key = addon:GetWhisperCharacterKey("Vale-Forever")
+    local entries = addon:GetTradeHistory(key)
+    check(entries[1].status == "request", "Trade requests are associated with the same character as whispers")
+    event("TRADE_SHOW")
+    event("TRADE_ACCEPT_UPDATE", 1, 1)
+    event("TRADE_CLOSED")
+    check(entries[1].status == "closed" and not entries[1].sent, "Unconfirmed transactions do not record a transfer")
+    event("UI_INFO_MESSAGE", 0, env.ERR_TRADE_COMPLETE)
+    event("CHAT_MSG_SYSTEM", env.ERR_TRADE_COMPLETE)
+    check(#entries == 1 and entries[1].status == "complete" and entries[1].sent.items[1].count == 2
+        and entries[1].received.money == 10203, "Trade confirmation records both sides once after close")
+    local slot
+    for _, widget in ipairs(state.widgets) do
+        if widget.thread and widget.thread.key == key then slot = widget end
+    end
+    state.Click(slot)
+    local chat = env.SmallerUIWhisperChat
+    check(chat.tradeToggle:IsShown() and not chat.tradeClose:IsShown(), "Trade history starts collapsed")
+    state.Click(chat.tradeToggle)
+    check(chat.rows[1].label:GetText():find("Sent: 2 x Runecloth", 1, true)
+        and chat.rows[1].label:GetText():find("Received: 1g 2s 3c", 1, true), "Trade receipts show sent and received separately")
+    state.Click(chat.tradeClose)
+    check(not chat.tradeClose:IsShown(), "Dismissing trade history returns to the conversation")
+    addon:SetWhisperOption("tradeHistory", false)
+    check(not chat:IsShown(), "Disabling trade history hides trade-only conversations")
+
+    env.UnitName = function(unit) if unit == "player" then return "Myself" end end
+    event("CHAT_MSG_PARTY", "Ready?", "Vale")
+    check(chat:IsShown() and chat.title:GetText() == "Party" and chat.rows[1].label:GetText():find("Vale", 1, true),
+        "Incoming party chat automatically opens its own conversation")
+    event("CHAT_MSG_PARTY_LEADER", "Ready", "Myself")
+    check(chat.rows[2].label:GetText():find("You", 1, true), "Outgoing party messages identify the player")
+    chat:Hide()
+    addon:SetWhisperOption("partyAutoOpen", false)
+    event("CHAT_MSG_PARTY", "Going", "Vale")
+    check(not chat:IsShown(), "Party auto-open can be turned off")
+    event("GROUP_LEFT")
+    check(not env.SmallerUIWhisperBar:IsShown(), "Leaving a group clears its Party conversation")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    local function OnlySlot(findState)
+        for _, widget in ipairs(findState.widgets) do
+            if widget.thread and not widget.thread.party then return widget end
+        end
+    end
+    event("CHAT_MSG_WHISPER", "Before saving", "Vale")
+    check(not env.SmallerUICharDB.chatHistory, "Chat persistence starts off")
+    addon:SetWhisperOption("saveHistory", true)
+    addon:SetWhisperOption("historyLimit", 80)
+    event("CHAT_MSG_WHISPER_INFORM", "Look for [Runecloth]", "Vale")
+    for index = 1, 65 do event("CHAT_MSG_WHISPER", "Message " .. index, "Vale") end
+    event("CHAT_MSG_PARTY", "Party history", "Vale")
+    local reloaded, reloadedState = boot(env.SmallerUIDB, env.SmallerUICharDB)
+    local slot = OnlySlot(reloadedState)
+    check(slot and slot.thread.unread == 66 and #slot.thread.messages == 67, "Login restores chat and unread counts")
+    reloadedState.Click(slot)
+    local chat = reloaded.SmallerUIWhisperChat
+    check(#chat.rows == 60 and chat.older:IsShown(), "Only one page of message frames is allocated")
+    reloadedState.Click(chat.older)
+    check(chat.rows[1].label:GetText() == "Before saving", "Older pages expose the beginning of the conversation")
+    reloadedState.addon:SetWhisperOption("timestamps", true)
+    chat.search:SetText("[rUneCloth]")
+    check(chat.rows[1].label:GetText() == "Look for [Runecloth]" and not chat.rows[2]:IsShown(),
+        "Case-insensitive literal search includes messages outside the current page")
+    check(chat.rows[1].stamp:GetText() == os.date("%d/%m/%Y %H:%M", slot.thread.messages[2][2]),
+        "Search results display the stored timestamp in UK format")
+    chat.search:SetText("No such message")
+    check(chat.empty:GetText() == "No matching messages" and not chat.rows[1]:IsShown(), "Empty search results are explicit")
+    reloadedState.addon:SetWhisperOption("saveHistory", false)
+    check(not reloaded.SmallerUICharDB.chatHistory, "Turning off persistence clears the saved copy")
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    local addon = state.addon
+    local link = "|cffffffff|Hitem:14047::::::::|h[Runecloth]|h|r"
+    env.LOOT_ITEM_SELF_MULTIPLE = "You receive loot: %sx%d."
+    env.LOOT_ITEM = "%s receives loot: %s."
+    env.RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)"
+    local winner = { playerName = "Vale", roll = 97, state = 0 }
+    env.C_LootHistory = { GetSortedInfoForDrop = function()
+        return { itemHyperlink = link, startTime = 123, winner = winner, rollInfos = {
+            winner, { playerName = "Rowan", roll = 88, state = 3 },
+        } }
+    end }
+    event("CHAT_MSG_LOOT", "You receive loot: " .. link .. "x4.")
+    event("CHAT_MSG_LOOT", "Vale receives loot: " .. link .. ".", "Vale")
+    event("CHAT_MSG_SYSTEM", "Vale rolls 93 (1-100)")
+    event("LOOT_HISTORY_UPDATE_DROP", 1, 2)
+    event("LOOT_HISTORY_UPDATE_DROP", 1, 2)
+    local records = addon:GetLootRecords()
+    check(#records == 4 and records[1][5] == 4 and records[3][5] == 93 and records[4][5] == 97,
+        "Loot history records items and both roll types while deduplicating group updates")
+    addon:ShowOptions("loot")
+    check(not env.SmallerUILootLedger and env.SmallerUILootOptions:IsVisible(), "Loot settings do not create the ledger")
+    state.Click(env.SmallerUIOpenLootLedger)
+    local lootPage = env.SmallerUILootLedger
+    check(lootPage:IsVisible() and not env.SmallerUILootOptions:IsVisible(), "Loot settings open a separate ledger")
+    lootPage.search:SetText("runecloth rowan greed")
+    tick()
+    check(lootPage.rows[1].record == records[4] and not lootPage.rows[2]:IsShown(),
+        "Loot search matches item and participant roll details")
+    check(lootPage.selected == records[4] and lootPage.rollRows[2]:IsVisible(),
+        "A matching roll opens its participant details in the ledger")
+    local _, restoredState = boot(env.SmallerUIDB, env.SmallerUICharDB)
+    check(#restoredState.addon:GetLootRecords() == 4, "Loot history reloads from character saved data")
+    lootPage.search:SetText("random roll")
+    for index = 1, 1100 do event("CHAT_MSG_SYSTEM", "Vale rolls 93 (1-100)") end
+    addon:SetLootLimit(1000)
+    for index = 1, 5 do tick() end
+    check(#lootPage.rows == 10 and lootPage.status:GetText() == "1-10 of 1000", "Large searches reuse ten rows and retain the configured limit")
+    lootPage:Hide()
+    state.shift = true
+    state.Click(env.SmallerUIMinimapButton)
+    check(lootPage:IsVisible(), "Shift-left-click opens the loot ledger")
+    state.Click(env.SmallerUIMinimapButton, "RightButton")
+    check(not addon:GetWhisperSettings().showBar, "Shift-right-click toggles whisper bar visibility")
+    state.shift = false
+    lootPage:Hide()
+    addon:ShowOptions("loot")
+    state.Click(env.SmallerUIShowLootLauncher)
+    local launcher = env.SmallerUILootLauncher
+    state.geometry = true
+    check(launcher:IsVisible() and addon:BeginResourceEdit(), "An enabled launcher can be positioned in Move Mode")
+    check(env.SmallerUIMoveSelection.label:GetText() == "Loot Ledger launcher", "Move Mode opens on the loot launcher")
+    local oldX = addon:GetResourceSettings().lootLauncher.x
+    state.mouseDown = true
+    launcher.scripts.OnDragStart(launcher)
+    state.cursorX = (state.cursorX or 0) + 40
+    tick()
+    state.mouseDown = false
+    launcher.scripts.OnDragStop(launcher)
+    addon:FinishResourceEdit(true)
+    check(addon:GetResourceSettings().lootLauncher.x ~= oldX, "Move Mode saves the launcher's new position")
+    addon:HideOptions()
+    state.Click(launcher)
+    check(lootPage:IsVisible(), "The launcher opens the same standalone loot ledger")
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    local addon = state.addon
+    addon:SetWhisperOption("partyAutoOpen", false)
+    event("CHAT_MSG_WHISPER", "Runecloth for sale", "Vale")
+    for index = 1, 70 do event("CHAT_MSG_WHISPER", "Later message " .. index, "Vale") end
+    event("CHAT_MSG_WHISPER", "Runecloth for trade", "Rowan")
+    event("CHAT_MSG_PARTY", "Runecloth in the bank", "Alex")
+    addon:ShowChatSearch("runecloth")
+    local search = env.SmallerUIChatSearch
+    check(#search.results == 3 and #search.rows == 8, "Full chat search spans multiple contacts and Party")
+    search.search:SetText("vale runecloth")
+    tick(0.2)
+    check(#search.results == 1, "Full chat search supports mixed player and message terms")
+    state.Click(search.rows[1])
+    local chat = env.SmallerUIWhisperChat
+    check(not search:IsShown() and chat:IsShown() and chat.pageOffset == 60
+        and chat.rows[1].label:GetText() == "Runecloth for sale" and chat.highlight,
+        "Opening an older match jumps to the right conversation page and highlights it")
+end
+
+do
+    local env, state, event, _, command = boot(nil)
+    local addon, timers, requests, purchases = state.addon, {}, {}, {}
+    local deals = addon.VendorDeals
+    local itemKey, commodityKey = { itemID = 1 }, { itemID = 2 }
+    local money, cancelled = 90, 0
+    local keyboardFocus
+    env.IsModifierKeyDown = function() return false end
+    env.GetCurrentKeyBoardFocus = function() return keyboardFocus end
+    env.GetMoney = function() return money end
+    env.GetMoneyString = function(value) return tostring(value) .. "c" end
+    env.C_Timer = { After = function(delay, callback) timers[#timers + 1] = { delay, callback } end }
+    local function runTimers(delay)
+        local previous = timers
+        timers = {}
+        for _, timer in ipairs(previous) do
+            if timer[1] == delay then timer[2]() else timers[#timers + 1] = timer end
+        end
+    end
+    local metadataReady = false
+    env.C_Item = {
+        GetItemInfo = function(id)
+            if id == 2 and not metadataReady then return end
+            return "Item " .. id, "item:" .. id, nil, nil, nil, nil, nil, nil, nil, nil, 100
+        end,
+        RequestLoadItemDataByID = function(id) metadataReady = id == 2 end,
+    }
+    local itemResults = {
+        { auctionID = 10, buyoutAmount = 35, quantity = 1 },
+        { auctionID = 11, buyoutAmount = 10, quantity = 1, containsAccountItem = true },
+        { auctionID = 12, quantity = 1 },
+    }
+    local commodityResults = {
+        { unitPrice = 30, quantity = 4 },
+        { unitPrice = 100, quantity = 12 },
+    }
+    env.C_AuctionHouse = {
+        GetItemKeyInfo = function(key) return { isCommodity = key.itemID == 2 } end,
+        IsThrottledMessageSystemReady = function() return true end,
+        SendSearchQuery = function(key) requests[#requests + 1] = key end,
+        GetNumItemSearchResults = function() return #itemResults end,
+        GetItemSearchResultInfo = function(_, index) return itemResults[index] end,
+        GetNumCommoditySearchResults = function() return #commodityResults end,
+        GetCommoditySearchResultInfo = function(_, index) return commodityResults[index] end,
+        HasFullCommoditySearchResults = function() return true end,
+        HasFullItemSearchResults = function() return true end,
+        GetQuoteDurationRemaining = function() return 20 end,
+        StartCommoditiesPurchase = function(...)
+            assert(select("#", ...) == 2, "Use the same two-argument commodity request as Auctionator")
+            requests.quote = { ... }
+        end,
+        CancelCommoditiesPurchase = function() cancelled = cancelled + 1 end,
+        ConfirmCommoditiesPurchase = function(id, quantity) purchases[#purchases + 1] = { id, quantity } end,
+        PlaceBid = function(id, cost) purchases[#purchases + 1] = { id, cost } end,
+    }
+    local listener, tab, button
+    env.Auctionator = {
+        IncrementalScan = { Events = { ScanStart = "start", ScanComplete = "complete", ScanFailed = "failed" } },
+        FullScan = { Events = { ScanStart = "replicateStart", ScanComplete = "replicateComplete", ScanFailed = "replicateFailed" } },
+        EventBus = { Register = function(_, target) listener = target end },
+    }
+    env.AuctionHouseFrame = env.CreateFrame("Frame")
+    env.LibStub = function()
+        return {
+            CreateTab = function(_, _, frame) tab = frame; button = env.CreateFrame("Button"); frame:Show() end,
+            GetButton = function() return button end,
+        }
+    end
+    command("vendor")
+    check(env.SmallerUIVendorDealOptions:IsShown() and listener, "Vendor Deals settings open and connect to Auctionator")
+    local reserve = env.SmallerUIVendorReserve
+    reserve.ClearFocus = function() end
+    reserve:SetText("0.002")
+    reserve.scripts.OnEnterPressed(reserve)
+    check(addon:GetVendorDealSettings().reserve == 20, "Vendor Deal settings save a fractional gold reserve in copper")
+    event("AUCTION_HOUSE_SHOW")
+    runTimers(0)
+    check(tab and not tab.all.enabled, "The Auction House tab opens with queue actions disabled before a scan")
+    listener:ReceiveEvent("start")
+    listener:ReceiveEvent("complete", {
+        { itemKey = itemKey, minPrice = 35, totalQuantity = 3 },
+        { itemKey = commodityKey, minPrice = 30, totalQuantity = 16 },
+        { itemKey = { itemID = 3 }, minPrice = 100, totalQuantity = 1 },
+    })
+    runTimers(0)
+    runTimers(2)
+    check(#deals.rows == 2 and tab.budget.enabled, "The scan lists candidates and excludes auctions at vendor value")
+
+    state.Click(tab.budget)
+    check(#deals.queue == 2 and #requests == 0 and tab.purchase.enabled,
+        "Queue Affordable is immediately usable and makes no live requests until Buy Next")
+    local function PressSpace()
+        tab.scripts.OnKeyDown(tab, "SPACE")
+        tab.scripts.OnKeyUp(tab, "SPACE")
+    end
+    keyboardFocus = reserve
+    PressSpace()
+    check(tab.propagateKeys and #requests == 0, "Space passes through while typing")
+    keyboardFocus = nil
+    tab.scripts.OnKeyDown(tab, "SPACE")
+    tab.scripts.OnKeyDown(tab, "SPACE")
+    check(tab.keyboardEnabled and not tab.propagateKeys and #requests == 0,
+        "Holding Space does not send a queue action")
+    tab.scripts.OnKeyUp(tab, "SPACE")
+    check(#requests == 1, "Releasing Space starts exactly one live check")
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
+    check(deals.purchase.quantity == 2 and deals.purchase.cost == 60,
+        "The budget reserves gold and selects only affordable commodity units at profitable tiers")
+    state.Click(tab.purchase)
+    event("COMMODITY_PRICE_UPDATED", 31, 62)
+    check(cancelled == 1 and deals.queue.index == 2 and #purchases == 0, "A higher commodity quote is cancelled without buying")
+    state.Click(tab.cancel)
+    state.Click(tab.budget)
+    state.Click(tab.purchase)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
+    state.Click(tab.purchase)
+    event("COMMODITY_PRICE_UPDATED", 30, 60)
+    check(deals.stage == "confirmCommodity" and #purchases == 0, "Quotes wait for an explicit click to purchase")
+    money = 70
+    event("PLAYER_MONEY")
+    check(not tab.purchase.enabled, "A quote cannot be confirmed if the reserve would be breached")
+    money = 90
+    event("PLAYER_MONEY")
+    PressSpace()
+    event("COMMODITY_PURCHASE_SUCCEEDED")
+    check(requests.quote[2] == 2 and #purchases == 1 and deals.queue.index == 2,
+        "Only the approved commodity quantity is purchased and the queue waits for confirmation")
+    check(addon.character.vendorFlipInventory.receipts[1].cost == 60,
+        "Only an Auction House confirmation records the exact paid amount for flip mail")
+
+    state.Click(tab.cancel)
+    local requestsBeforeQueue = #requests
+    state.Click(tab.all)
+    check(#deals.queue == 2 and #requests == requestsBeforeQueue, "Queue All is available without another scan")
+    deals:Skip()
+    state.Click(tab.purchase)
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    check(deals.stage == "confirmItem" and deals.purchase.auctionID == 10 and #purchases == 1,
+        "Live buyout checks omit bid-only and account-owned listings")
+    state.Click(tab.purchase)
+    event("AUCTION_HOUSE_PURCHASE_COMPLETED", 11)
+    check(deals.pending and deals.pending.auctionID == 10, "An unrelated purchase event cannot advance the queue")
+    state.Click(tab.cancel)
+    check(not deals.queue and deals.pending and not tab.purchase:IsShown() and not tab.keyboardEnabled,
+        "Clear Queue closes the queue while retaining the submitted purchase until the server responds")
+    event("AUCTION_HOUSE_PURCHASE_COMPLETED", 10)
+    check(purchases[2][1] == 10 and purchases[2][2] == 35 and not deals.pending and tab.all.enabled,
+        "The confirmed buyout uses the live auction ID and price and releases the controls")
+
+    deals:Prepare("row", deals.rows[2])
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    itemResults[1].buyoutAmount = 70
+    state.Click(tab.purchase)
+    check(not deals.queue and #purchases == 2, "A more expensive buyout is skipped even after the initial confirmation price was shown")
+    state.Click(tab.rows[2].buy)
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    env.C_AuctionHouse.PlaceBid = function() error("Purchase rejected") end
+    state.Click(tab.purchase)
+    check(not deals.pending and not deals.queue and tab.all.enabled, "A purchase API error releases the controls immediately")
+    state.Click(tab.all)
+    tab:Hide()
+    check(not tab.keyboardEnabled and not deals.queue, "Closing Vendor Deals releases Space")
+    tab:Show()
+
+    env.C_AuctionHouse.MakeItemKey = function(id, level, suffix) return { itemID = id, itemLevel = level, itemSuffix = suffix } end
+    local scanInfo = { [3] = 4, [10] = 300, [17] = 1 }
+    listener:ReceiveEvent("replicateComplete", { { replicateInfo = scanInfo } })
+    runTimers(0)
+    check(#deals.rows == 1 and deals.rows[1].price == 75, "The Get All scan compares a stack's per-unit buyout to vendor value")
+
+end
+
+do
+    local env, state, event, tick = boot(nil)
+    local addon, timers = state.addon, {}
+    local flips = addon.VendorFlipInventory
+    local calls, sold, mail, bags = {}, {}, {}, { [0] = {}, [1] = {} }
+    local clock, money = 2000000, 123
+    local names, prices = { [51] = "Zebra Cloth", [52] = "Amber Ring" }, { [51] = 20, [52] = 15 }
+    env.GetServerTime = function() return clock end
+    env.GetMoney = function() return money end
+    env.GetMoneyString = function(value) return value .. "c" end
+    env.GetCursorInfo = function() end
+    env.C_Timer = { After = function(delay, callback) timers[#timers + 1] = { delay, callback } end }
+    local function runTimers(delay)
+        local previous = timers
+        timers = {}
+        tick(delay)
+        for _, timer in ipairs(previous) do
+            if timer[1] == delay then timer[2]() else timers[#timers + 1] = timer end
+        end
+    end
+    local function stack(guid, id, count)
+        return { guid = guid, itemID = id, hyperlink = "item:" .. id .. ":0:0", iconFileID = id, stackCount = count }
+    end
+    env.ItemLocation = { CreateFromBagAndSlot = function(_, bag, slot) return bags[bag][slot] end }
+    env.C_Item = {
+        GetItemGUID = function(location) return location.guid end,
+        GetItemInfo = function(link)
+            local id = tonumber(link:match("item:(%d+)"))
+            return names[id], link, nil, nil, nil, nil, nil, nil, nil, id, prices[id]
+        end,
+    }
+    env.C_Container = {
+        GetContainerNumSlots = function(bag) return bags[bag] and 8 or 0 end,
+        GetContainerItemInfo = function(bag, slot) return bags[bag][slot] end,
+        UseContainerItem = function(bag, slot)
+            local item = assert(bags[bag][slot])
+            sold[#sold + 1] = item.guid
+            money = money + prices[item.itemID] * item.stackCount
+            bags[bag][slot] = nil
+        end,
+    }
+    env.GetInboxNumItems = function() return #mail, #mail end
+    env.GetInboxHeaderInfo = function(index)
+        local letter = mail[index]
+        local count = 0
+        for _ in pairs(letter.attachments) do count = count + 1 end
+        return nil, nil, "Auction House", nil, 0, 0, 30 - (clock - letter.at) / 86400, count
+    end
+    env.GetInboxInvoiceInfo = function(index) return "buyer", names[mail[index].id], mail[index].seller, mail[index].paid end
+    env.GetInboxItem = function(index, attachment)
+        local letter = mail[index]
+        local quantity = letter.attachments[attachment]
+        if quantity then return names[letter.id], letter.id, letter.id, quantity end
+    end
+    env.GetInboxItemLink = function(index, attachment)
+        if mail[index].attachments[attachment] then return "item:" .. mail[index].id end
+    end
+    env.TakeInboxItem = function(index, attachment) calls[#calls + 1] = { index, attachment } end
+    env.AutoLootMailItem = function(index) calls[#calls + 1] = { index } end
+    env.hooksecurefunc = function(name, callback)
+        local native = env[name]
+        env[name] = function(...)
+            native(...)
+            callback(...)
+        end
+    end
+    env.Enum.PlayerInteractionType = { MailInfo = 9 }
+    event("PLAYER_LOGIN")
+    env.MerchantFrame = env.CreateFrame("Frame")
+    env.MerchantFrame.selectedTab = 1
+    event("MERCHANT_SHOW")
+    check(not env.SmallerUIReviewVendorFlips, "A merchant never shows the review button before a verified flip is in bags")
+    event("MERCHANT_CLOSED")
+    local function purchase(id, quantity, cost, seller)
+        addon:RecordVendorFlipPurchase({ deal = { key = { itemID = id } }, link = "item:" .. id,
+            quantity = quantity, seller = seller }, cost)
+    end
+    bags[0][1] = stack("inventory", 51, 3)
+    purchase(51, 5, 30, "Seller-Realm")
+    mail[1] = { at = clock - 300, id = 51, attachments = { 5 }, paid = 30, seller = "Seller-Realm" }
+    mail[2] = { at = clock, id = 51, attachments = { 5 }, paid = 30, seller = "Seller" }
+    mail[3] = { at = clock, id = 51, attachments = { 5 }, paid = 30, seller = "Seller" }
+    event("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", 9)
+    env.TakeInboxItem(2, 1)
+    check(calls[1][1] == 2 and not flips.pending[51], "The mail addon can loot normally and ambiguous invoices are withheld")
+    table.remove(mail, 3)
+    event("MAIL_INBOX_UPDATE")
+    env.TakeInboxItem(1, 1)
+    check(not flips.pending[51], "An old identical invoice is outside the buyer receipt's delivery window")
+    env.TakeInboxItem(2, 1)
+    check(flips.pending[51] and flips.pending[51].quantity == 5, "Posty's attachment call observes the exact current buyer invoice")
+    event("MAIL_FAILED", 51)
+    check(not flips.pending[51] and #addon.character.vendorFlipInventory.receipts == 1, "A rejected take keeps the intact receipt available")
+    env.TakeInboxItem(2, 1)
+    event("MAIL_SUCCESS", 51)
+    bags[0][1].stackCount = 4
+    bags[0][2], bags[0][3] = stack("new-a", 51, 2), stack("new-b", 51, 2)
+    table.remove(mail, 2)
+    event("MAIL_INBOX_UPDATE")
+    local verified = flips:SellableStacks()
+    check(verified["new-a"] and verified["new-b"] and not verified.inventory,
+        "A normal mail pickup flags only newly created stacks and leaves a mixed stack unflagged")
+    purchase(52, 1, 5, "Vendorfan")
+    mail[2] = { at = clock, id = 52, attachments = { 1 }, paid = 5, seller = "Vendorfan" }
+    event("MAIL_INBOX_UPDATE")
+    env.AutoLootMailItem(2)
+    table.remove(mail, 2)
+    bags[0][4] = stack("new-c", 52, 1)
+    event("MAIL_SUCCESS", 52)
+    event("MAIL_CLOSED")
+
+    event("MERCHANT_SHOW")
+    local merchant = env.SmallerUIReviewVendorFlips
+    check(merchant and merchant:IsShown(), "Verified inventory exposes the vendor review button")
+    state.Click(merchant)
+    local review = env.SmallerUIVendorFlipReview
+    check(review.rows[1].item.guid == "new-a" and review.rows[1].toggle:GetChecked()
+        and review.rows[1].icon.textureValue == 51 and review.sell.enabled, "Review shows the highest value stack, its icon, and default selection")
+    state.Select(env.SmallerUIVendorFlipSort, "name")
+    check(review.rows[1].item.guid == "new-c", "Review can sort by item name")
+    review.search:SetText("ZEBRA")
+    check(review.rows[1].item.guid == "new-a" and not review.rows[3]:IsShown(), "Search is case insensitive and filters the list")
+    state.Click(review.selectNone)
+    check(not review.sell.enabled and not review.rows[1].toggle:GetChecked(), "Deselect All clears the entire review")
+    state.Click(review.selectAll)
+    state.Click(review.rows[1].toggle)
+    check(not review.selected["new-a"] and review.selected["new-c"], "An individual toggle leaves other selections intact outside the search")
+    state.Click(review.cancel)
+    check(#sold == 0 and not review:IsShown(), "Cancelling does not sell anything")
+
+    state.Click(merchant)
+    review.search:SetText("Zebra")
+    state.Click(review.rows[1].toggle)
+    state.Click(review.sell)
+    bags[1][2], bags[0][4] = bags[0][4], nil
+    runTimers(0.10)
+    runTimers(0.10)
+    runTimers(0.10)
+    runTimers(0.10)
+    check(#sold == 2 and sold[1] == "new-b" and sold[2] == "new-c" and bags[0][2].guid == "new-a",
+        "One sale action sells only the selected GUIDs, including a stack moved after review")
+    state.Click(merchant)
+    bags[0][2].stackCount = 3
+    event("BAG_UPDATE_DELAYED")
+    check(not merchant:IsShown() and not review.sell.enabled and #sold == 2 and bags[0][1].stackCount == 4,
+        "A changed stack loses its flag and original inventory is never sold")
+    event("MERCHANT_CLOSED")
+    clock = clock + 900
+    purchase(52, 1, 5, "Vendorfan")
+    mail[2] = { at = clock, id = 52, attachments = { 1 }, paid = 5, seller = "Vendorfan" }
+    env.C_AuctionHouse = { GetAuctionInfoByID = function() return { itemKey = { itemID = 52 } } end }
+    event("AUCTION_HOUSE_PURCHASE_COMPLETED", 300)
+    event("MAIL_SHOW")
+    env.TakeInboxItem(2, 1)
+    check(not flips.pending[52], "An overlapping purchase made outside Vendor Deals keeps an ambiguous invoice out of collection")
+
+    purchase(51, 4, 12, "Fabrics")
+    mail[3] = { at = clock, id = 51, attachments = { 2, 2 }, paid = 12, seller = "Fabrics" }
+    env.TakeInboxItem(3, 2)
+    bags[0][5] = stack("two-attachments", 51, 2)
+    event("BAG_UPDATE_DELAYED")
+    check(not flips:SellableStacks()["two-attachments"], "Bag gains alone cannot flag a pending attachment")
+    mail[3].attachments[2] = nil
+    event("MAIL_INBOX_UPDATE")
+    check(flips:SellableStacks()["two-attachments"].count == 2, "An exact partial delivery flags the first clean stack")
+    env.TakeInboxItem(3, 1)
+    table.remove(mail, 3)
+    event("MAIL_INBOX_UPDATE")
+    event("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", 9)
+    bags[0][5].stackCount = 4
+    event("BAG_UPDATE_DELAYED")
+    check(flips:SellableStacks()["two-attachments"].count == 4,
+        "Later confirmed attachments can extend a verified stack even when the final bag event follows mailbox close")
+
+    clock = clock + 900
+    purchase(51, 2, 4, "Fabrics")
+    mail[3] = { at = clock, id = 51, attachments = { 2 }, paid = 10, seller = "Someone Else" }
+    mail[4] = { at = clock, id = 51, attachments = { 2 }, paid = 4, seller = "Fabrics" }
+    event("MAIL_SHOW")
+    env.TakeInboxItem(4, 1)
+    table.remove(mail, 3)
+    bags[0][6] = stack("unrelated-mail", 51, 2)
+    event("MAIL_INBOX_UPDATE")
+    event("BAG_UPDATE_DELAYED")
+    check(not flips:SellableStacks()["unrelated-mail"],
+        "An unrelated identical stack cannot be flagged while the actual flip invoice is still in the inbox")
 end
 
 print(string.format("Passed %d checks (%s).", passed, _VERSION))

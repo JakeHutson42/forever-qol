@@ -26,6 +26,7 @@ local function Defaults()
         enabled = false, partyEnabled = false, petEnabled = false, hideBlizzard = true, smooth = true,
         incomingHeals = true, periodicHeals = true, periodicDamage = false,
         swing = Addon:DefaultSwingSettings(),
+        lootLauncher = { x = -260, y = -164, scale = 1 },
         seal = { enabled = true, linked = true, x = 8, y = 0, size = 32, lastSpellID = 0 },
         player = { x = 0, y = -150, scale = 1, linked = true, gap = 4, values = true, colours = DefaultColours(), style = Addon:DefaultResourceStyle(),
             curved = false, arc = { x = 0, y = -12, scale = 1, width = 42, height = 216, gap = 214, linked = true, health = { x = 0, y = 0, scale = 1 }, power = { x = 0, y = 0, scale = 1 } },
@@ -274,7 +275,6 @@ local function LayoutBar(bar, settings, view, left, top)
     bar:ClearAllPoints()
     bar:SetPoint("TOPLEFT", view, "TOPLEFT", left + settings.x, top + settings.y)
     bar.valueText:SetWidth(math.max(1, settings.width - 12))
-    bar:EnableMouse(editor ~= nil)
     bar.grip:SetShown(editor ~= nil)
     Addon:StyleResourceBar(bar, Addon:GetResourceSettings()[view.scope], editor ~= nil)
 end
@@ -332,7 +332,6 @@ local function LayoutCurvedView(view, settings)
         bar:ClearAllPoints()
         bar:SetPoint(side, view, side, offset.x, offset.y)
         bar.trail:SetAllPoints(bar)
-        bar:EnableMouse(editor ~= nil)
         bar.grip:Hide()
         Addon:StyleResourceBar(bar, settings, editor ~= nil)
     end
@@ -691,6 +690,10 @@ local function CreateBar(view, kind)
     bar.valueText = textLayer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     bar.valueText:SetPoint("RIGHT", -6, 0)
     bar.valueText:SetWordWrap(false)
+    local function EndHover(self) Addon:SetResourceTextHovered(self, false) end
+    bar:SetScript("OnEnter", function(self) Addon:SetResourceTextHovered(self, true) end)
+    bar:SetScript("OnLeave", EndHover)
+    bar:SetScript("OnHide", EndHover)
     bar.pulse = bar.fill:CreateTexture(nil, "ARTWORK")
     bar.pulse:SetAllPoints(bar.fill:GetStatusBarTexture())
     bar.pulse:Hide()
@@ -750,6 +753,7 @@ function Addon:ApplyResources()
     self:SyncNativeResources()
     self:UpdateSealIndicator()
     self:ApplySwingTimer()
+    self:UpdateLootLauncher()
     if self.RefreshResourceOptions then self:RefreshResourceOptions() end
 end
 
@@ -838,6 +842,9 @@ end
 
 function Addon:SelectMoveElement(scope, kind)
     if scope == "element" then return self:SelectElementMoveTarget(kind) end
+    if scope == "lootLauncher" then
+        return self:SelectResourceMoveTarget(self:GetLootLauncher(), "Loot Ledger launcher", scope, scope)
+    end
     if scope == "swing" then
         return self:SelectResourceMoveTarget(self:GetSwingTimerFrame(), "Swing timer", scope, scope)
     end
@@ -852,6 +859,12 @@ end
 function Addon:GetMoveElementControls(scope, kind)
     if scope == "element" then return self:GetElementMoveControls() end
     local cfg = self:GetResourceSettings()
+    if scope == "lootLauncher" then
+        return nil, function(factor)
+            cfg.lootLauncher.scale = Clamp(cfg.lootLauncher.scale * factor, 0.5, 2)
+            self:UpdateLootLauncher()
+        end
+    end
     if scope == "swing" then
         return nil, function(factor)
             local swing = cfg.swing
@@ -888,12 +901,21 @@ function Addon:GetMoveElementControls(scope, kind)
     end
 end
 
+function Addon:EndLootLauncherDrag()
+    local drag = self:GetResourceMoveState()
+    if not drag or drag.scope ~= "lootLauncher" then return end
+    self:FinishResourceMove()
+    SaveGroup(drag.target, self:GetResourceSettings().lootLauncher)
+    self:UpdateLootLauncher()
+end
+
 function Addon:FinishResourceEdit(save, closing)
     if not editor then return end
     save = save and not InCombatLockdown()
     self:EndResourceDrag()
     self:EndSealDrag()
     self:EndSwingTimerDrag()
+    self:EndLootLauncherDrag()
     self:FinishElementEdit(save)
     self:CloseResourceMoveMode()
     local previous = editor
@@ -933,7 +955,8 @@ function Addon:BeginResourceEdit()
     toolbar = self:CreateResourceMoveToolbar()
     self:ApplyResources()
     local scope = editor.origin == "party" and "party" or editor.origin == "pet" and "pet"
-        or editor.origin == "swing" and "swing" or "player"
+        or editor.origin == "swing" and "swing"
+        or editor.origin == "loot" and self:GetLootSettings().showLauncher and "lootLauncher" or "player"
     self:SelectMoveElement(scope, "health")
     driver:SetScript("OnUpdate", Tick)
     toolbar:Show()

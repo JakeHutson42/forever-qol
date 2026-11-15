@@ -15,9 +15,10 @@ Addon.resourceTextures = {
     { 8, "Glacier Glass", media .. "GlacierGlass.tga" },
     { 9, "Runefang", media .. "Runefang.tga" },
     { 10, "Rivetsteel", media .. "Rivetsteel.tga" },
+    { 11, "Foundry enamel", media .. "Foundry.tga" },
 }
 Addon.resourceThemes = {
-    { 1, "Classic" },
+    { 1, "Classic", texture = 1, trim = 1 },
     { 2, "Satin", texture = 5, trim = 2, health = 0xCB465A, power = 0x498BDE, accent = 0x97AFCF },
     { 3, "Warlock: Soulfire", texture = 9, trim = 3, health = 0xAD55DB, power = 0x82C844, accent = 0xCDA5F8 },
     { 4, "Warrior: Iron Guard", texture = 10, trim = 2, health = 0xBE5045, power = 0xE39545, accent = 0xD6A27A },
@@ -28,6 +29,7 @@ Addon.resourceThemes = {
     { 9, "Shaman: Stormcall", texture = 6, trim = 3, health = 0x4EACC7, power = 0x647EE0, accent = 0xA5E2F4 },
     { 10, "Mage: Frostfire", texture = 8, trim = 3, health = 0x72C6ED, power = 0xA978EC, accent = 0xB6E7FF },
     { 11, "Druid: Wild Growth", texture = 7, trim = 3, health = 0x74B768, power = 0xCE9446, accent = 0xCCDF9A },
+    { 12, "Foundry", texture = 11, trim = 1 },
 }
 Addon.resourceMotion = {
     { 1, "Off", hold = 0 },
@@ -45,12 +47,13 @@ local fonts = { false, "Fonts\\ARIALN.TTF", "Fonts\\SKURRI.TTF" }
 local alignments = { "LEFT", "CENTER", "RIGHT" }
 
 function Addon:DefaultResourceStyle()
-    return { healthFormat = 2, powerFormat = 2, fontSize = 12, autoFontSize = true, font = 1,
+    return { healthFormat = 2, powerFormat = 2, healthTextOnHover = false, powerTextOnHover = false,
+        fontSize = 12, autoFontSize = true, font = 1,
         alignment = 3, shortNumbers = false, border = true, backgroundOpacity = 94,
-        hideOutOfCombat = false, combatOpacity = 100, outOfCombatOpacity = 100, barTexture = 1,
-        theme = 1, themeColours = true, trim = 1, motion = 2,
-        textColour = { r = 1, g = 1, b = 1 }, borderColour = { r = 0.13, g = 0.16, b = 0.19 },
-        trackColour = { r = 0.035, g = 0.045, b = 0.055 }, accentColour = { r = 0.59, g = 0.69, b = 0.81 } }
+        hideOutOfCombat = false, combatOpacity = 100, outOfCombatOpacity = 100, barTexture = 11,
+        theme = 12, themeColours = true, trim = 1, motion = 2,
+        textColour = { r = 1, g = 1, b = 1 }, borderColour = { r = 0.34, g = 0.28, b = 0.21 },
+        trackColour = { r = 0.038, g = 0.047, b = 0.055 }, accentColour = { r = 0.85, g = 0.69, b = 0.43 } }
 end
 
 function Addon:IsResourceColourToken(token)
@@ -94,7 +97,7 @@ function Addon:ValidateResourceStyles()
 end
 
 function Addon:ResourceFont(label, style, height)
-    local size = style.autoFontSize and math.max(9, math.min(15, height * 0.5)) or style.fontSize
+    local size = style.autoFontSize and math.max(9, math.min(15, math.floor(height * 0.59))) or style.fontSize
     local font = fonts[style.font] or STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
     if label.resourceFont ~= font or label.resourceFontSize ~= size then
         label:SetFont(font, size, "OUTLINE")
@@ -154,7 +157,7 @@ function Addon:SetResourceBarCurved(bar, curved)
     bar.pulse:Hide()
     if bar.arcPulse then bar.arcPulse:Hide() end
     OrientResourceFill(bar, bar.fill, curved)
-    OrientResourceFill(bar, bar.trail, curved)
+    if bar.trail then OrientResourceFill(bar, bar.trail, curved) end
     if bar.forecasts then
         for _, kind in ipairs({ "direct", "hot", "dot" }) do OrientResourceFill(bar, bar.forecasts[kind], curved) end
     end
@@ -193,40 +196,79 @@ function Addon:StyleResourceSurface(bar, style, editing)
         bar.arcOutline:SetShown(style.border or editing)
     end
 
-    local showTrim = not bar.curved and style.border and style.trim > 1 and not editing
+    local showTrim = not bar.curved and style.border and not editing
     if showTrim and not bar.trim then
         local layer = bar.trimLayer
-        local line = TrimTexture(layer)
-        line:SetPoint("TOPLEFT", bar, "TOPLEFT")
-        line:SetPoint("TOPRIGHT", bar, "TOPRIGHT")
-        bar.trim = { line = line, left = TrimTexture(layer), right = TrimTexture(layer) }
-        for _, side in ipairs({ "left", "right" }) do
-            bar.trim[side]:SetTexture(media .. "TrimJewel.tga")
-        end
-        bar.trim.left:SetPoint("CENTER", bar, "LEFT")
-        bar.trim.right:SetPoint("CENTER", bar, "RIGHT")
+        bar.trim = { line = TrimTexture(layer), shadow = TrimTexture(layer) }
     end
     if not bar.trim then return end
-    local accent, pixel = style.accentColour, bar.pixel
-    bar.trim.line:SetHeight(pixel)
-    bar.trim.line:SetColorTexture(accent.r, accent.g, accent.b, 0.62)
-    bar.trim.line:SetShown(showTrim)
+    local accent, pixel = style.trim > 1 and style.accentColour or color, bar.pixel
+    local line, shadow = bar.trim.line, bar.trim.shadow
+    if bar.trim.pixel ~= pixel then
+        bar.trim.pixel = pixel
+        line:ClearAllPoints()
+        shadow:ClearAllPoints()
+        line:SetPoint("TOPLEFT", bar, "TOPLEFT", pixel, -pixel)
+        line:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -pixel, -pixel)
+        line:SetHeight(pixel)
+        shadow:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", pixel, pixel)
+        shadow:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -pixel, pixel)
+        shadow:SetHeight(pixel)
+    end
+    line:SetColorTexture(accent.r, accent.g, accent.b, style.trim > 1 and 0.82 or 0.47)
+    shadow:SetColorTexture(0, 0, 0, 0.46)
+    local showBevel = showTrim and bar:GetHeight() >= 7 * pixel
+    line:SetShown(showBevel)
+    shadow:SetShown(showBevel)
     local size = math.min(10, math.floor(bar:GetHeight() / pixel + 0.01) - 2) * pixel
     local showJewels = showTrim and style.trim == 3 and size >= 4 * pixel and bar:GetWidth() >= 8 * size
+    if showJewels and not bar.trim.left then
+        for _, side in ipairs({ "left", "right" }) do
+            local jewel = TrimTexture(bar.trimLayer)
+            jewel:SetTexture(media .. "TrimJewel.tga")
+            jewel:SetPoint("CENTER", bar, side:upper())
+            bar.trim[side] = jewel
+        end
+    end
+    if not bar.trim.left then return end
     for _, side in ipairs({ "left", "right" }) do
         local jewel = bar.trim[side]
         jewel:SetShown(showJewels)
         if showJewels then
             jewel:SetSize(size, size)
-            jewel:SetVertexColor(accent.r, accent.g, accent.b)
+            jewel:SetVertexColor(style.accentColour.r, style.accentColour.g, style.accentColour.b)
         end
     end
+end
+
+local function UpdateTextVisibility(bar)
+    local visible = bar.textEnabled and (not bar.hoverText or bar.editing or bar.hovered == true)
+    bar.valueText:SetShown(visible)
+    bar.label:SetShown(visible and bar.labelEnabled)
+end
+
+function Addon:SetResourceTextHovered(bar, hovered)
+    bar.hovered = hovered
+    UpdateTextVisibility(bar)
 end
 
 function Addon:StyleResourceBar(bar, settings, editing)
     local style = settings.style
     self:StyleResourceSurface(bar, style, editing)
     local kind = bar.resourceKind
+    local format = style[kind .. "Format"]
+    local dimensions = settings[kind]
+    local hover = style[kind .. "TextOnHover"]
+    bar.textEnabled = settings.values and format ~= 0
+        and (bar.curved or dimensions.width >= 90 and (hover or dimensions.height >= 10))
+    bar.labelEnabled = bar.curved or style.alignment == 3 and format < 4 and dimensions.width >= 180
+    bar.hoverText = bar.textEnabled and hover
+    bar.editing = editing
+    local mouseMotion = editing or bar.hoverText
+    if not mouseMotion then bar.hovered = false end
+    -- Observe hover without taking clicks away from the world or other frames.
+    bar:SetMouseClickEnabled(editing)
+    bar:SetMouseMotionEnabled(mouseMotion)
     if bar.curved then
         local tipOffset = settings.arc.width * (kind == "health" and 0.25 or -0.25)
         self:ResourceFont(bar.label, style, 18)
@@ -237,23 +279,17 @@ function Addon:StyleResourceBar(bar, settings, editing)
         bar.valueText:SetPoint("TOP", bar, "BOTTOM", tipOffset, -3)
         bar.valueText:SetWidth(math.min(140, settings.arc.gap))
         bar.valueText:SetJustifyH("CENTER")
-        local visible = settings.values and style[kind .. "Format"] ~= 0
-        bar.valueText:SetShown(visible)
-        bar.label:SetShown(visible)
-        return
+    else
+        bar.label:ClearAllPoints()
+        bar.label:SetPoint("LEFT", 6, 0)
+        self:ResourceFont(bar.label, style, dimensions.height)
+        self:ResourceFont(bar.valueText, style, dimensions.height)
+        bar.valueText:ClearAllPoints()
+        bar.valueText:SetPoint("LEFT", 6, 0)
+        bar.valueText:SetPoint("RIGHT", -6, 0)
+        bar.valueText:SetJustifyH(alignments[style.alignment])
     end
-    bar.label:ClearAllPoints()
-    bar.label:SetPoint("LEFT", 6, 0)
-    self:ResourceFont(bar.label, style, settings[kind].height)
-    self:ResourceFont(bar.valueText, style, settings[kind].height)
-    bar.valueText:ClearAllPoints()
-    bar.valueText:SetPoint("LEFT", 6, 0)
-    bar.valueText:SetPoint("RIGHT", -6, 0)
-    bar.valueText:SetJustifyH(alignments[style.alignment])
-    local visible = settings.values and style[bar.resourceKind .. "Format"] ~= 0
-        and settings[bar.resourceKind].height >= 12 and settings[bar.resourceKind].width >= 90
-    bar.valueText:SetShown(visible)
-    bar.label:SetShown(visible and style.alignment == 3 and style[bar.resourceKind .. "Format"] < 4 and settings[bar.resourceKind].width >= 180)
+    UpdateTextVisibility(bar)
 end
 
 local function Short(value)
