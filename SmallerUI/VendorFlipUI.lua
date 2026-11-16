@@ -2,6 +2,8 @@ local _, Addon = ...
 local Flips = Addon.VendorFlipInventory
 local dialog, merchantButton
 local PAGE_SIZE = 8
+local WIDTH, HEIGHT = 590, 567
+local gold = { 0.83, 0.66, 0.35, 1 }
 local sortChoices = { { "value", "Highest value" }, { "name", "Item name" } }
 
 local function Money(value)
@@ -31,13 +33,17 @@ local function Render()
     dialog.selectAll:SetEnabled(next(dialog.items) ~= nil)
     dialog.selectNone:SetEnabled(selected > 0)
     dialog.sell:SetEnabled(selected > 0 and Flips:CanSell() and not Flips.selling)
-    dialog.summary:SetText(("%d stack(s) selected · %s"):format(selected, Money(value)))
+    dialog.summary:SetText(("%d stack%s selected"):format(selected, selected == 1 and "" or "s"))
+    dialog.total:SetText("Vendor total: " .. Money(value))
     for index, widget in ipairs(dialog.rows) do
         local item = rows[(dialog.page - 1) * PAGE_SIZE + index]
         widget.item = item
         widget:SetShown(item ~= nil)
         if item then
-            widget.toggle:SetChecked(dialog.selected[item.guid] == true)
+            local checked = dialog.selected[item.guid] == true
+            widget.toggle:SetChecked(checked)
+            widget:SetBackdropColor(checked and 0.14 or 0.09, checked and 0.20 or 0.12, checked and 0.20 or 0.14, 1)
+            widget:SetBackdropBorderColor(checked and 0.35 or 0.22, checked and 0.33 or 0.23, checked and 0.27 or 0.23, 1)
             widget.icon:SetTexture(item.icon)
             widget.name:SetText(item.name)
             widget.quantity:SetText(("×%d"):format(item.count))
@@ -46,28 +52,43 @@ local function Render()
     end
 end
 
+local function FitDialog()
+    local scale = UIParent:GetEffectiveScale()
+    local width, height = UIParent:GetSize()
+    dialog:SetScale(math.max(0.1, math.min(1, (width - 24 / scale) / WIDTH, (height - 24 / scale) / HEIGHT)))
+end
+
 local function MakeDialog()
     if dialog then return end
     local UI = Addon.OptionsUI
     dialog = CreateFrame("Frame", "SmallerUIVendorFlipReview", UIParent, "BackdropTemplate")
-    dialog:SetSize(540, 490)
+    dialog:SetSize(WIDTH, HEIGHT)
     dialog:SetPoint("CENTER")
     dialog:SetFrameStrata("DIALOG")
     dialog:SetClampedToScreen(true)
+    dialog:SetMovable(true)
     dialog:EnableMouse(true)
-    UI.Backdrop(dialog, { 0.07, 0.10, 0.13, 1 })
+    UI.Backdrop(dialog, { 0.052, 0.073, 0.080, 1 }, gold)
     dialog:Hide()
     table.insert(UISpecialFrames, dialog:GetName())
-    UI.Label(dialog, "Review Vendor Deals", 16, -14, "GameFontNormalLarge")
-    UI.Label(dialog, "Uncheck any stack you want to keep.", 16, -40, "GameFontHighlightSmall")
-    UI.Button(dialog, nil, "×", 494, -12, 29, function() dialog:Hide() end)
+    UI.Header(dialog, "Review Vendor Deals", "INV_Misc_Coin_01", function() dialog:Hide() end)
+    dialog:RegisterEvent("UI_SCALE_CHANGED")
+    dialog:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    dialog:SetScript("OnEvent", FitDialog)
 
-    local search = CreateFrame("EditBox", "SmallerUIVendorFlipSearch", dialog, "InputBoxTemplate")
-    search:SetSize(245, 26)
-    search:SetPoint("TOPLEFT", 20, -64)
+    local search = CreateFrame("EditBox", "SmallerUIVendorFlipSearch", dialog, "BackdropTemplate")
+    search:SetSize(364, 28)
+    search:SetPoint("TOPLEFT", 16, -87)
     search:SetAutoFocus(false)
     search:SetMaxLetters(80)
-    local placeholder = UI.Label(search, "Search item names", 4, -7, "GameFontDisableSmall")
+    search:SetFontObject(GameFontHighlightSmall)
+    search:SetTextInsets(28, 8, 0, 0)
+    UI.Backdrop(search, { 0.036, 0.052, 0.060, 1 })
+    local lens = search:CreateTexture(nil, "ARTWORK")
+    lens:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+    lens:SetPoint("LEFT", 7, 0)
+    lens:SetSize(14, 14)
+    local placeholder = UI.Label(search, "Search item names", 28, -7, "GameFontDisableSmall")
     search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     search:SetScript("OnTextChanged", function(self)
@@ -76,36 +97,52 @@ local function MakeDialog()
         Render()
     end)
     dialog.search, dialog.sort = search, "value"
-    UI.Select(dialog, "SmallerUIVendorFlipSort", 282, -64, 160, sortChoices, function() return dialog.sort end, function(value)
+    UI.Select(dialog, "SmallerUIVendorFlipSort", 396, -87, 178, sortChoices, function() return dialog.sort end, function(value)
         dialog.sort, dialog.page = value, 1
         Render()
     end)
-    dialog.selectAll = UI.Button(dialog, nil, "Select All", 16, -102, 100, function()
+    dialog.selectAll = UI.Button(dialog, nil, "Select All", 16, -124, 96, function()
         for guid in pairs(dialog.items) do dialog.selected[guid] = true end
         Render()
     end)
-    dialog.selectNone = UI.Button(dialog, nil, "Deselect All", 124, -102, 106, function()
+    dialog.selectNone = UI.Button(dialog, nil, "Deselect All", 120, -124, 102, function()
         dialog.selected = {}
         Render()
     end)
-    dialog.empty = UI.Label(dialog, "", 18, -151, "GameFontHighlightSmall")
+    UI.Label(dialog, "Uncheck any stack you want to keep.", 247, -131, "GameFontHighlightSmall")
+    local headings = CreateFrame("Frame", nil, dialog, "BackdropTemplate")
+    headings:SetPoint("TOPLEFT", 16, -160)
+    headings:SetSize(WIDTH - 32, 23)
+    UI.Plate(headings, { 0.19, 0.17, 0.13, 1 })
+    UI.Label(headings, "Sell", 13, -5, "GameFontNormalSmall")
+    UI.Label(headings, "Item", 89, -5, "GameFontNormalSmall")
+    local function RightLabel(parent, text, inset, y, font)
+        local label = parent:CreateFontString(nil, "ARTWORK", font)
+        label:SetPoint("TOPRIGHT", -inset, y)
+        label:SetText(text)
+        return label
+    end
+    RightLabel(headings, "Qty", 146, -5, "GameFontNormalSmall")
+    RightLabel(headings, "Vendor value", 11, -5, "GameFontNormalSmall")
+    dialog.empty = UI.Label(dialog, "", 26, -200, "GameFontHighlightSmall")
     dialog.rows = {}
     for index = 1, PAGE_SIZE do
         local row = CreateFrame("Frame", nil, dialog, "BackdropTemplate")
-        row:SetPoint("TOPLEFT", 16, -139 - (index - 1) * 33)
-        row:SetSize(508, 30)
-        UI.Backdrop(row, { 0.10, 0.14, 0.18, 1 })
-        row.toggle = UI.Switch(row, nil, "", 7, -1, function(enabled)
+        row:SetPoint("TOPLEFT", 16, -187 - (index - 1) * 37)
+        row:SetSize(WIDTH - 32, 33)
+        UI.Plate(row)
+        row.toggle = UI.Switch(row, nil, "", 7, -3, function(enabled)
             if row.item then dialog.selected[row.item.guid] = enabled end
             Render()
         end)
         row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetSize(25, 25)
-        row.icon:SetPoint("LEFT", 51, 0)
-        row.name = UI.Label(row, "", 85, -9, "GameFontHighlightSmall", 222)
+        row.icon:SetSize(26, 26)
+        row.icon:SetPoint("LEFT", 53, 0)
+        row.icon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
+        row.name = UI.Label(row, "", 89, -9, "GameFontHighlight", 269)
         row.name:SetWordWrap(false)
-        row.quantity = UI.Label(row, "", 318, -9, "GameFontHighlightSmall")
-        row.value = UI.Label(row, "", 382, -9, "GameFontNormalSmall")
+        row.quantity = RightLabel(row, "", 146, -10, "GameFontHighlightSmall")
+        row.value = RightLabel(row, "", 11, -10, "GameFontNormalSmall")
         row:EnableMouse(true)
         row:SetScript("OnEnter", function(self)
             if not self.item then return end
@@ -116,18 +153,33 @@ local function MakeDialog()
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         dialog.rows[index] = row
     end
-    dialog.prev = UI.Button(dialog, nil, "<", 16, -407, 36, function() dialog.page = dialog.page - 1; Render() end)
-    dialog.next = UI.Button(dialog, nil, ">", 111, -407, 36, function() dialog.page = dialog.page + 1; Render() end)
-    dialog.pageLabel = UI.Label(dialog, "", 65, -414, "GameFontHighlightSmall")
-    dialog.summary = UI.Label(dialog, "", 16, -455, "GameFontNormalSmall", 285)
-    dialog.cancel = UI.Button(dialog, nil, "Cancel", 310, -446, 89, function() dialog:Hide() end)
-    dialog.sell = UI.Button(dialog, nil, "Sell Selected", 409, -446, 114, function()
+    dialog.prev = UI.Button(dialog, nil, "‹", 16, -487, 34, function() dialog.page = dialog.page - 1; Render() end)
+    dialog.next = UI.Button(dialog, nil, "›", 111, -487, 34, function() dialog.page = dialog.page + 1; Render() end)
+    UI.Tooltip(dialog.prev, "Previous page")
+    UI.Tooltip(dialog.next, "Next page")
+    dialog.pageLabel = dialog:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    dialog.pageLabel:SetPoint("CENTER", dialog.prev, "RIGHT", 30, 0)
+    local footer = CreateFrame("Frame", nil, dialog, "BackdropTemplate")
+    footer:SetPoint("BOTTOMLEFT", 1, 1)
+    footer:SetPoint("BOTTOMRIGHT", -1, 1)
+    footer:SetHeight(44)
+    UI.Plate(footer, { 0.12, 0.15, 0.16, 1 })
+    dialog.summary = UI.Label(footer, "", 15, -8, "GameFontHighlightSmall")
+    dialog.total = UI.Label(footer, "", 15, -24, "GameFontNormalSmall")
+    dialog.cancel = UI.Button(footer, nil, "Cancel", 345, -9, 95, function() dialog:Hide() end)
+    dialog.sell = UI.Button(footer, nil, "Sell Selected", 448, -9, 124, function()
         local reviewed = {}
         for guid, item in pairs(dialog.items) do
             if dialog.selected[guid] then reviewed[#reviewed + 1] = item end
         end
         table.sort(reviewed, function(a, b) return a.guid < b.guid end)
         if #reviewed > 0 and Flips:Sell(reviewed) then dialog:Hide() end
+    end)
+    dialog.sell:SetBackdropColor(0.25, 0.20, 0.13, 1)
+    dialog.sell:SetBackdropBorderColor(unpack(gold))
+    dialog:SetScript("OnHide", function(self)
+        self:StopMovingOrSizing()
+        search:ClearFocus()
     end)
 end
 
@@ -139,6 +191,7 @@ local function OpenReview()
     for guid in pairs(items) do dialog.selected[guid] = true end
     dialog.search:SetText("")
     dialog.search:ClearFocus()
+    FitDialog()
     dialog:Show()
     Render()
 end

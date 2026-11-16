@@ -33,10 +33,15 @@ function Addon:RecordVendorFlipPurchase(purchase, cost)
     local link = ItemKey(purchase.link)
     if not purchase.unitPrice and not link then return end
     local receipts = Ledger().receipts
-    receipts[#receipts + 1] = {
+    local receipt = {
         itemID = purchase.deal.key.itemID, link = link, quantity = purchase.quantity, cost = cost,
         seller = purchase.seller, commodity = purchase.unitPrice ~= nil, at = Now(),
     }
+    if purchase.deal.gap then
+        receipt.resale = { name = purchase.deal.name, marketKey = self.VendorResaleMarket:ItemKey(purchase.deal.key),
+            target = purchase.target }
+    end
+    receipts[#receipts + 1] = receipt
     return true
 end
 
@@ -256,6 +261,13 @@ local function CheckTake(take)
     local receipt = take.receipt
     receipt.remaining = take.remainder
     if receipt.remaining == 0 then RemoveReceipt(receipt) end
+    if receipt.resale then
+        local purchases = Addon.VendorResale:Ledger().purchases
+        purchases[#purchases + 1] = { itemID = receipt.itemID, name = receipt.resale.name, marketKey = receipt.resale.marketKey,
+            target = receipt.resale.target, quantity = take.quantity, unitCost = receipt.cost / receipt.quantity, at = Now() }
+        if Addon.RefreshVendorResaleAuctions then Addon:RefreshVendorResaleAuctions() end
+        return
+    end
     local stacks, tagged = Ledger().stacks, 0
     for guid, item in pairs(gains) do
         local old, tracked = previous[guid], stacks[guid]

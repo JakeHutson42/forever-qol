@@ -3,8 +3,10 @@ local listener = CreateFrame("Frame")
 local prefix = "FQOL_POPUP"
 local maxBytes = 160
 local channels = { PARTY = "party", WHISPER = "whisper" }
+local outlines = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
+local fadeIn, fadeOut, settleTime = 0.15, 0.28, 0.36
 local available, lastSent
-local popup, elapsed
+local popup
 local pending = {}
 local lastReceived = {}
 local lastWhisper, audioHandle, audioTimer
@@ -104,120 +106,133 @@ function Addon:TestPartyAlertSound()
     end
 end
 
-local function SetPopupText(frame, text)
+local function LayoutPopup(frame)
     local cfg = Addon:GetPartyAlertSettings()
-    local screenWidth = UIParent:GetWidth() * UIParent:GetEffectiveScale()
-    local width = math.max(140, math.min(720, (screenWidth - 32) / 1.15))
-    frame.cfg = cfg
-    frame.label:SetWidth(width)
-    frame.label:SetTextColor(cfg.r, cfg.g, cfg.b)
-    local font = STANDARD_TEXT_FONT or frame.label.GetFont and frame.label:GetFont()
-    if font then
-        local outlines = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
-        frame.label:SetFont(font, cfg.size, outlines[cfg.thickness])
+    local scale = UIParent:GetEffectiveScale()
+    local screenWidth, screenHeight = UIParent:GetWidth() * scale, UIParent:GetHeight() * scale
+    local width = math.max(120, math.min(560, screenWidth - 40))
+    local label = frame.label
+    label:SetTextColor(cfg.r, cfg.g, cfg.b)
+    local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+    local size = math.min(cfg.size, math.max(12, math.floor((width - 32) / 3)))
+    local limit = math.max(44, math.floor(screenHeight * 0.45) - 55)
+    label:SetFont(font, size, outlines[cfg.thickness])
+    if label.GetUnboundedStringWidth then
+        local preferred = math.ceil((label:GetUnboundedStringWidth() or 0) + 32)
+        width = math.min(width, math.max(320, preferred))
     end
-    frame.label:SetText((text:gsub("|", "||")))
-    frame.glow:SetWidth(width)
-    frame.glow:SetVertexColor(cfg.r, cfg.g, cfg.b, 0.6)
-    frame.topRule:SetColorTexture(cfg.r, cfg.g, cfg.b, 1)
-    frame.bottomRule:SetColorTexture(cfg.r, cfg.g, cfg.b, 1)
-    local height = math.max(40, frame.label:GetStringHeight() / 2 + 11)
-    frame.topRule:ClearAllPoints()
-    frame.topRule:SetPoint("CENTER", 0, height)
-    frame.bottomRule:ClearAllPoints()
-    frame.bottomRule:SetPoint("CENTER", 0, -height)
-    PlayAlertSound(cfg)
+    label:SetWidth(width - 32)
+    local height = label:GetStringHeight()
+    while height > limit and size > 12 do
+        size = math.max(12, math.min(size - 1, math.floor(size * math.sqrt(limit / height))))
+        label:SetFont(font, size, outlines[cfg.thickness])
+        height = label:GetStringHeight()
+    end
+    frame:SetSize(width, math.max(size, height) + 55)
+    frame.card:SetSize(frame:GetSize())
+    frame:ClearAllPoints()
+    frame:SetPoint("TOP", UIParent, "TOP", 0, -math.floor(screenHeight * 0.31))
 end
 
 local function CreatePopup()
+    local UI = Addon.OptionsUI
     local frame = CreateFrame("Frame", "SmallerUIPartyAlert", UIParent)
     frame:Hide()
-    frame:SetSize(620, 108)
     frame:SetIgnoreParentScale(true)
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
     frame:EnableMouse(false)
+    frame:RegisterEvent("UI_SCALE_CHANGED")
+    frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    frame:SetScript("OnEvent", function(self) if self:IsShown() then LayoutPopup(self) end end)
 
-    local glow = frame:CreateTexture(nil, "BACKGROUND")
-    glow:SetTexture("Interface\\Cooldown\\star4")
-    glow:SetPoint("CENTER", 0, 0)
-    glow:SetSize(610, 150)
-    glow:SetBlendMode("ADD")
-    glow:SetVertexColor(0.65, 0.24, 0.07, 0.5)
-    frame.glow = glow
-
-    local function Rule(y)
-        local line = frame:CreateTexture(nil, "ARTWORK")
-        line:SetColorTexture(0.9, 0.57, 0.24, 0.85)
-        line:SetPoint("CENTER", 0, y)
-        line:SetSize(220, 1)
-        return line
-    end
-    frame.topRule, frame.bottomRule = Rule(40), Rule(-40)
-    local label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    label:SetPoint("CENTER")
-    label:SetWidth(600)
+    local card = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    card:SetPoint("TOP")
+    card:EnableMouse(false)
+    UI.Plate(card, { 0.071, 0.098, 0.11, 0.98 })
+    card:SetBackdropBorderColor(0.57, 0.45, 0.28, 1)
+    frame.card = card
+    local crest = card:CreateTexture(nil, "ARTWORK")
+    crest:SetSize(16, 16)
+    crest:SetPoint("TOPLEFT", 13, -9)
+    crest:SetTexture("Interface\\AddOns\\SmallerUI\\Media\\TrimJewel.tga")
+    crest:SetVertexColor(1, 0.84, 0.55)
+    frame.source = UI.Label(card, "", 36, -10, "GameFontNormal")
+    frame.source:SetPoint("TOPRIGHT", -16, -10)
+    frame.source:SetWordWrap(false)
+    frame.source:SetTextColor(0.92, 0.76, 0.49)
+    local rule = card:CreateTexture(nil, "BORDER")
+    rule:SetPoint("TOPLEFT", 16, -33)
+    rule:SetPoint("TOPRIGHT", -16, -33)
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.66, 0.54, 0.36, 0.52)
+    local label = card:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    label:SetPoint("TOPLEFT", 16, -42)
+    label:SetJustifyH("LEFT")
     label:SetWordWrap(true)
     if label.SetNonSpaceWrap then label:SetNonSpaceWrap(true) end
-    label:SetTextColor(1, 0.79, 0.4)
-    if STANDARD_TEXT_FONT then label:SetFont(STANDARD_TEXT_FONT, 38, "THICKOUTLINE") end
     frame.label = label
     return frame
 end
 
+local function StartAlert(frame, alert)
+    frame.alert, frame.elapsed = alert, 0
+    local characters = #alert.text:gsub("[\128-\191]", "")
+    frame.duration = 1.85 + math.min(3.1, math.max(0, (characters - 30) / 40))
+    frame.source:SetText((alert.source:gsub("|", "||")))
+    frame.label:SetText((alert.text:gsub("|", "||")))
+    LayoutPopup(frame)
+    PlayAlertSound(Addon:GetPartyAlertSettings())
+end
+
 local function Animate(frame, delta)
-    elapsed = elapsed + delta
-    if elapsed >= 1.85 then
-        local nextText = table.remove(pending, 1)
-        if not nextText then
+    local elapsed = frame.elapsed + delta
+    if elapsed >= frame.duration then
+        local nextAlert = table.remove(pending, 1)
+        if not nextAlert then
             frame:Hide()
             frame:SetScript("OnUpdate", nil)
             return
         end
-        SetPopupText(frame, nextText)
+        StartAlert(frame, nextAlert)
         elapsed = 0
     end
-    local rise = math.min(1, elapsed / 0.19)
-    local settle = math.min(1, elapsed / 0.42)
-    local fade = math.min(1, (1.85 - elapsed) / 0.42)
-    local cfg = frame.cfg
-    local intensity = cfg.intensity / 100
-    local scale, y, entrance = 1, 130, rise * 3
-    if cfg.style == "bounce" then
-        scale = 1 + intensity * (-0.34 + 0.52 * (1 - (1 - rise) ^ 2) - 0.18 * settle)
-        y = y - 36 * intensity * (1 - settle)
-    elseif cfg.style == "pop" then
-        scale = 1 - 0.38 * intensity * (1 - rise) ^ 2
-    else
-        y = y + 96 * intensity * (1 - settle) ^ 2
-        entrance = math.min(1, elapsed / 0.3)
+    frame:SetAlpha(math.min(1, elapsed / fadeIn, (frame.duration - elapsed) / fadeOut))
+    if elapsed <= settleTime or frame.elapsed < settleTime then
+        local progress = math.min(1, elapsed / settleTime)
+        local tail = (1 - progress) ^ 3
+        local cfg = Addon:GetPartyAlertSettings()
+        local intensity = cfg.intensity / 100
+        local scale, y = 1, 0
+        if cfg.style == "bounce" then
+            scale = 1 + intensity * (-0.10 * tail + 0.019 * math.sin(progress * math.pi) ^ 2)
+            y = -9 * intensity * tail
+        elseif cfg.style == "pop" then
+            scale = 1 - 0.14 * intensity * tail
+        else
+            y = 20 * intensity * tail
+        end
+        frame.card:SetScale(scale)
+        frame.card:ClearAllPoints()
+        frame.card:SetPoint("TOP", frame, "TOP", 0, y)
     end
-    frame:SetScale(scale)
-    frame:SetAlpha(math.min(entrance, fade))
-    frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "CENTER", 0, y + 18 * intensity * (1 - fade))
-    frame.glow:SetAlpha(intensity * (0.2 + 0.8 * (1 - settle)))
-    frame.topRule:SetAlpha(0.85 * intensity)
-    frame.bottomRule:SetAlpha(0.85 * intensity)
-    local width = 80 + 240 * (1 - (1 - settle) ^ 2)
-    frame.topRule:SetWidth(width)
-    frame.bottomRule:SetWidth(width)
+    frame.elapsed = elapsed
 end
 
-local function Present(text)
+local function Present(text, source, preview)
     popup = popup or CreatePopup()
-    if popup:IsShown() then
-        if #pending < 4 then pending[#pending + 1] = text end
+    local alert = { text = text, source = source, preview = preview }
+    if popup:IsShown() and not popup.alert.preview then
+        if not preview and #pending < 4 then pending[#pending + 1] = alert end
         return
     end
-    elapsed = 0
-    SetPopupText(popup, text)
+    StartAlert(popup, alert)
     Animate(popup, 0)
     popup:SetScript("OnUpdate", Animate)
     popup:Show()
 end
 
 function Addon:PreviewPartyAlert()
-    Present("chickenNuggies")
+    Present("Regroup at the entrance.", "Alert preview", true)
 end
 
 local function InParty()
@@ -253,7 +268,7 @@ local function SendPopup(input)
     if not party and not recipient then
         if cfg.whisper then Addon:Print("Choose a whisper recipient or send a character whisper first.")
         elseif cfg.party and IsInGroup and IsInGroup() then Addon:Print("Party pop-ups require a regular party.")
-        else Present(text) end
+        else Present(text, "Chat alert") end
         return
     end
     local now = GetTime()
@@ -265,18 +280,18 @@ local function SendPopup(input)
     end
     local codes = Enum and Enum.SendAddonMessageResult
     local success = codes and codes.Success or 0
-    local sent = false
+    local source
     if party then
-        if send(prefix, text, "PARTY") == success then sent = true
+        if send(prefix, text, "PARTY") == success then source = "Party"
         else Addon:Print("WoW did not deliver the Party pop-up.") end
     end
     if cfg.whisper then
         if not recipient then Addon:Print("No whisper recipient is set.")
-        elseif send(prefix, text, "WHISPER", recipient) == success then sent = true
+        elseif send(prefix, text, "WHISPER", recipient) == success then source = source or "Whisper"
         else Addon:Print("WoW did not deliver the Whisper pop-up.") end
     end
     lastSent = now
-    if sent then Present(text) end
+    if source then Present(text, source) end
 end
 
 SLASH_SMALLERUIPOPUP1 = "/swear"
@@ -314,5 +329,5 @@ listener:SetScript("OnEvent", function(_, event, incomingPrefix, message, channe
     end
     if lastReceived[sender] then return end
     lastReceived[sender] = now
-    Present(text)
+    Present(text, (channel == "PARTY" and "Party · " or "Whisper · ") .. sender)
 end)

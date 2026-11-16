@@ -2,6 +2,7 @@ local _, Addon = ...
 local driver = CreateFrame("Frame")
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local DOT = "Interface\\AddOns\\SmallerUI\\Media\\SwingDot.tga"
+local TRACK = "Interface\\AddOns\\SmallerUI\\Media\\Foundry.tga"
 local events = { "PLAYER_SWING", "PLAYER_DEAD", "PLAYER_ENTERING_WORLD", "WEAPON_SLOT_CHANGED" }
 local timer, dragging, duration, deadline
 local listening = false
@@ -49,30 +50,57 @@ end
 function Addon:CreateSwingDisplay(parent, name)
     local frame = CreateFrame("Frame", name, parent)
     frame:EnableMouse(false)
+    local rail = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    rail:EnableMouse(false)
+    frame.rail = rail
     local bar = CreateFrame("StatusBar", nil, frame)
     frame.bar = bar
+    bar:SetFrameLevel(rail:GetFrameLevel() + 1)
     bar:SetPoint("CENTER")
+    rail:SetPoint("CENTER", bar, "CENTER")
     bar:SetMinMaxValues(0, 1)
     bar:SetStatusBarTexture(WHITE)
+    local fill = bar:GetStatusBarTexture()
+    if fill.SetDrawLayer then fill:SetDrawLayer("ARTWORK") end
     bar:EnableMouse(false)
     bar.track = bar:CreateTexture(nil, "BACKGROUND")
     bar.track:SetAllPoints()
-    bar.track:SetColorTexture(0.20, 0.23, 0.28, 0.85)
+    bar.track:SetTexture(TRACK)
+    bar.track:SetVertexColor(0.27, 0.32, 0.34, 1)
+    bar.stop = bar:CreateTexture(nil, "ARTWORK")
+    bar.stop:SetColorTexture(0.57, 0.65, 0.64, 1)
     bar.dot = bar:CreateTexture(nil, "OVERLAY")
     bar.dot:SetTexture(DOT)
-    bar.dot:SetPoint("CENTER", bar:GetStatusBarTexture(), "RIGHT", 0, 0)
+    bar.dot:SetPoint("CENTER", fill, "RIGHT", 0, 0)
+    if bar.dot.SetTexelSnappingBias then bar.dot:SetTexelSnappingBias(0) end
+    if bar.dot.SetSnapToPixelGrid then bar.dot:SetSnapToPixelGrid(false) end
     return frame
 end
 
 function Addon:StyleSwingDisplay(frame, settings)
     local line = settings.shape == 1
     local color = themes[settings.theme]
-    local bar = frame.bar
-    frame:SetSize(settings.width, math.max(16, settings.height))
-    bar:SetSize(settings.width, line and 2 or settings.height)
+    local bar, rail = frame.bar, frame.rail
+    local pixel = (PixelUtil and PixelUtil.GetPixelToUIUnitFactor() or 1) / frame:GetEffectiveScale()
+    local height = line and 2 * pixel or math.max(pixel, math.floor(settings.height / pixel + 0.5) * pixel)
+    local dot = math.max(4 * pixel, settings.height)
+    local capHeight = line and 4 * pixel or height
+    frame:SetSize(settings.width, math.max(16, line and dot or height + 4 * pixel))
+    bar:SetSize(settings.width, height)
+    rail:SetSize(settings.width + 4 * pixel, capHeight + 4 * pixel)
+    if rail.pixel ~= pixel then
+        rail:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = pixel })
+        rail:SetBackdropColor(0.035, 0.055, 0.064, 1)
+        rail:SetBackdropBorderColor(0.016, 0.023, 0.027, 1)
+        rail.pixel = pixel
+    end
     bar:GetStatusBarTexture():SetTexture(line and WHITE or self.resourceTextures[settings.texture][3])
     bar:SetStatusBarColor(color[3], color[4], color[5])
-    bar.dot:SetSize(settings.height, settings.height)
+    bar.stop:ClearAllPoints()
+    bar.stop:SetPoint("LEFT", bar, "RIGHT", 0, 0)
+    bar.stop:SetSize(pixel, capHeight)
+    bar.stop:SetShown(line)
+    bar.dot:SetSize(dot, dot)
     bar.dot:SetVertexColor(color[3], color[4], color[5])
     bar.dot:SetShown(line)
 end

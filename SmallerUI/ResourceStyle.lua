@@ -286,7 +286,7 @@ function Addon:StyleResourceBar(bar, settings, editing)
         self:ResourceFont(bar.valueText, style, dimensions.height)
         bar.valueText:ClearAllPoints()
         bar.valueText:SetPoint("LEFT", 6, 0)
-        bar.valueText:SetPoint("RIGHT", -6, 0)
+        bar.valueText:SetPoint("RIGHT", editing and -16 or -6, 0)
         bar.valueText:SetJustifyH(alignments[style.alignment])
     end
     UpdateTextVisibility(bar)

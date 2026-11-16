@@ -2,7 +2,7 @@
 ## Title: Forever QoL
 ## Notes: UI scaling, resource bars, loot history, and more. Type /fqol for settings.
 ## Author: Jake
-## Version: 1.0.0
+## Version: 1.1.0
 ## OptionalDeps: Blizzard_ColorPickerFrame, Auctionator
 ## SavedVariables: SmallerUIDB
 ## SavedVariablesPerCharacter: SmallerUICharDB
@@ -28,8 +28,15 @@ Whispers.lua
 ChatSearch.lua
 TradeHistory.lua
 WhisperOptions.lua
+VendorResaleMarket.lua
+VendorResale.lua
+VendorResaleAuctions.lua
+AuctionPriceGaps.lua
 VendorDeals.lua
+AuctionScanner.lua
+AuctionScanProgress.lua
 VendorDealOptions.lua
 VendorFlipInventory.lua
 VendorFlipUI.lua
+VendorResaleUI.lua
 Options.lua

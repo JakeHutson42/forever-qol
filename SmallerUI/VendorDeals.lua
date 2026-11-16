@@ -1,11 +1,16 @@
-local _, Addon = ...
+local addonName, Addon = ...
 local frame = CreateFrame("Frame")
-local Deals = { rows = {}, status = "Run a Full Scan from the Auctionator tab." }
+local Deals = { rows = {}, status = "Scan the Auction House to find items below vendor value." }
+local Gaps = Addon.AuctionPriceGaps
 Addon.VendorDeals = Deals
 
-local function Update(message)
-    if message then Deals.status = message end
+local function Update(message, gap)
+    if message then
+        if gap or Deals.mode == "gap" then Gaps.status = message
+        else Deals.status = message end
+    end
     if Addon.RefreshVendorDealsTab then Addon:RefreshVendorDealsTab() end
+    if Addon.AuctionScanner then Addon.AuctionScanner:Resume() end
 end
 
 function Addon:GetVendorDealSettings()
@@ -18,17 +23,46 @@ function Addon:GetVendorDealSettings()
     return settings
 end
 
+local auctionDefaults = {
+    vendorMinimum = { 0, 0, 100000000 }, gapDiscount = { 15, 1, 99 }, gapUnits = { 200, 1, 10000 },
+    gapSupport = { 5, 1, 10000 }, gapAge = { 15, 1, 120 }, category = { 7, 0, 20 },
+    historyDays = { 30, 14, 90 }, typicalDays = { 7, 2, 14 },
+}
+
+function Addon:GetAuctionSettings()
+    if type(self.db.auctionSettings) ~= "table" then self.db.auctionSettings = {} end
+    local settings = self.db.auctionSettings
+    if self.validatedAuctionSettings == settings then return settings end
+    for key, rule in pairs(auctionDefaults) do
+        local value = settings[key]
+        if type(value) ~= "number" or not (value >= rule[2] and value <= rule[3]) then settings[key] = rule[1] end
+    end
+    self.validatedAuctionSettings = settings
+    return settings
+end
+
+function Deals:VisibleRows()
+    local minimum = Addon:GetAuctionSettings().vendorMinimum
+    if minimum <= 0 then return self.rows end
+    local rows = {}
+    for _, row in ipairs(self.rows) do
+        if row.vendor - row.price >= minimum then rows[#rows + 1] = row end
+    end
+    return rows
+end
+
 function Deals:AvailableGold()
-    local reserve = self.mode == "budget" and Addon:GetVendorDealSettings().reserve or 0
+    local reserve = (self.mode == "budget" or self.mode == "gap") and Addon:GetVendorDealSettings().reserve or 0
     return math.max(0, GetMoney() - reserve)
 end
 
 function Deals:Cancel(message)
+    local gap = self.mode == "gap"
     local cancelQuote = self.stage == "quote" or self.stage == "confirmCommodity"
     self.queue, self.search, self.purchase, self.offers = nil, nil, nil, nil
     self.stage, self.mode, self.quote, self.quoteRequest = nil, nil, nil, nil
     if cancelQuote then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end
-    Update(message)
+    Update(message, gap)
 end
 
 local function KeyString(key)
@@ -36,7 +70,7 @@ local function KeyString(key)
 end
 
 local function ScanEntry(entry, replicate)
-    if not replicate then return entry.itemKey, entry.minPrice, entry.totalQuantity end
+    if not replicate then return entry.itemKey, entry.minPrice, entry.totalQuantity, entry.itemLink end
     local data = entry.replicateInfo
     local link = entry.itemLink
     local quantity = data and data[3]
@@ -46,13 +80,20 @@ local function ScanEntry(entry, replicate)
     return C_AuctionHouse.MakeItemKey(data[17], 0, tonumber(suffix) or 0), data[10] / quantity, quantity, link
 end
 
-local function BuildSnapshot(entries, replicate)
+function Deals:BeginSnapshot(replicate, marketScope, coverage, native)
     local token, rows, byKey, itemInfo, missing = {}, {}, {}, {}, {}
-    Deals.snapshot = token
-    Deals.rows = {}
-    Deals.scanning = true
-    Deals:Cancel("Checking vendor prices from the scan…")
-    local index = 1
+    local market = Addon.VendorResaleMarket
+    local scan = market:StartScan(replicate, marketScope)
+    scan.gaps, scan.coverage = {}, coverage
+    local previousDeals, previousGaps = Deals.rows, Gaps.rows
+    local previousGapTime, previousGapScope = Gaps.at, Gaps.scope
+    Gaps.scanning = true
+    Deals.scanRun = token
+    if Addon:GetVendorDealSettings().enabled then
+        Deals.snapshot = token
+        Deals.scanning = true
+        if not native then Deals:Cancel("Checking vendor prices from the scan…") end
+    end
     local function Check(key, price, link)
         local metadata = itemInfo[key.itemID]
         if not metadata then
@@ -68,7 +109,8 @@ local function BuildSnapshot(entries, replicate)
                 local info = C_AuctionHouse.GetItemKeyInfo(key)
                 row = { key = key, name = info and info.itemName or metadata.name or tostring(key.itemID),
                     link = link or metadata.link, vendor = metadata.vendor, price = price,
-                    icon = info and info.iconFileID or metadata.icon, quality = info and info.quality or metadata.quality }
+                    icon = info and info.iconFileID or metadata.icon, quality = info and info.quality or metadata.quality,
+                    scope = scan.scope, classID = coverage and coverage.classID }
                 byKey[id], rows[#rows + 1] = row, row
             elseif price < row.price then
                 row.price, row.link = price, link or row.link
@@ -76,25 +118,44 @@ local function BuildSnapshot(entries, replicate)
         end
         return true
     end
-    local function Publish(unavailable)
-        table.sort(rows, function(a, b)
+    local function Publish(unavailable, preview)
+        local visible = {}
+        if coverage then
+            for _, row in ipairs(previousDeals) do
+                if row.scope == scan.scope and not scan.items[KeyString(row.key)]
+                    and not market:Covered(coverage, KeyString(row.key), row) then visible[#visible + 1] = row end
+            end
+        end
+        for _, row in ipairs(rows) do visible[#visible + 1] = row end
+        table.sort(visible, function(a, b)
             local left, right = a.vendor - a.price, b.vendor - b.price
             if left == right then return a.name < b.name end
             return left > right
         end)
-        Deals.rows, Deals.scanning = rows, false
-        local message = #rows > 0 and ("%d candidates from the last scan. Use Buy to check live prices."):format(#rows)
+        Deals.rows, Deals.scanning = visible, preview == true
+        local message = #visible > 0 and ("%d candidates. Use Buy to check live prices."):format(#visible)
             or "No listings below vendor value were found."
         if unavailable > 0 then message = message .. (" Vendor prices unavailable for %d item types."):format(unavailable) end
         Update(message)
     end
-    local function Process()
-        if Deals.snapshot ~= token then return end
-        local last = math.min(index + 249, #entries)
-        for i = index, last do
-            local key, price, quantity, link = ScanEntry(entries[i], replicate)
+    local session = {}
+    function session:Push(entries, first, last)
+        if Deals.scanRun ~= token then return false end
+        local checkDeals = Deals.snapshot == token
+        for i = first or 1, last or #entries do
+            local entry = entries[i]
+            local key, price, quantity, link = ScanEntry(entry, replicate)
             if key and price and price > 0 and quantity and quantity > 0 and (key.battlePetSpeciesID or 0) == 0 then
-                if not Check(key, price, link) then
+                local id = market:ItemKey(key)
+                market:AddObservation(scan, id, price, quantity, entry.observedAt)
+                if coverage and coverage.classID then scan.items[id].classID = coverage.classID end
+                if entry.tiers then
+                    for _, tier in ipairs(entry.tiers) do
+                        if tier.price == price then scan.items[id].atFloor = tier.marketQuantity; break end
+                    end
+                end
+                Gaps:Add(scan, key, price, quantity, link, entry.tiers, entry.observedAt)
+                if checkDeals and not Check(key, price, link) then
                     local requests = missing[key.itemID]
                     if not requests then
                         requests = {}
@@ -105,12 +166,29 @@ local function BuildSnapshot(entries, replicate)
                 end
             end
         end
-        index = last + 1
-        if index <= #entries then
-            C_Timer.After(0, Process)
-            return
-        end
+        return true
+    end
+    function session:Preview(showGaps)
+        if Deals.scanRun ~= token then return end
+        if showGaps then Gaps:Publish(scan, previousGaps, true) end
+        if Deals.snapshot == token then Publish(0, true) else Update() end
+    end
+    function session:Cancel()
+        if Deals.scanRun ~= token then return end
+        Deals.scanRun, Deals.snapshot = nil, nil
+        Deals.rows, Gaps.rows = previousDeals, previousGaps
+        Gaps.at, Gaps.scope = previousGapTime, previousGapScope
+        Deals.scanning, Gaps.scanning = false, false
+        Update()
+    end
+    function session:Finish()
+        if Deals.scanRun ~= token then return end
+        market:SaveScan(scan)
+        Gaps:Publish(scan, previousGaps)
+        Update()
+        if Deals.snapshot ~= token then return end
         if not next(missing) then Publish(0); return end
+        if native then Publish(0) end
         C_Timer.After(2, function()
             if Deals.snapshot ~= token then return end
             local unavailable = 0
@@ -125,12 +203,27 @@ local function BuildSnapshot(entries, replicate)
             Publish(unavailable)
         end)
     end
+    return session
+end
+
+local function BuildSnapshot(entries, replicate, marketScope)
+    Deals.importing = true
+    local session = Deals:BeginSnapshot(replicate, marketScope)
+    local index = 1
+    local function Process()
+        local last = math.min(index + 249, #entries)
+        if not session:Push(entries, index, last) then return end
+        index = last + 1
+        if index <= #entries then C_Timer.After(0, Process)
+        else Deals.importing = nil; session:Finish() end
+    end
     C_Timer.After(0, Process)
 end
 
 local function LiveOffers(row, commodity)
     local ah, offers = C_AuctionHouse, {}
     local itemID = row.key.itemID
+    local minimum = Addon:GetAuctionSettings().vendorMinimum
     local count = commodity and ah.GetNumCommoditySearchResults(itemID) or ah.GetNumItemSearchResults(row.key)
     for index = 1, count do
         local result
@@ -143,7 +236,8 @@ local function LiveOffers(row, commodity)
             local vendor = row.vendor
             if not commodity and result.itemLink then vendor = select(11, C_Item.GetItemInfo(result.itemLink)) end
             local profit = cost and vendor and vendor * result.quantity - cost
-            if cost and cost > 0 and profit and profit > 0 and (commodity or result.auctionID) then
+            if cost and cost > 0 and profit and profit > 0 and profit >= minimum * result.quantity
+                and (commodity or result.auctionID) then
                 offers[#offers + 1] = { deal = row, auctionID = not commodity and result.auctionID or nil,
                     link = result.itemLink, seller = not commodity and result.owners and result.owners[1] or nil,
                     quantity = result.quantity, cost = cost, profit = profit, vendor = vendor, unitPrice = unitPrice }
@@ -159,7 +253,7 @@ local function AdvanceRow(message)
     if not queue then return end
     Deals.search, Deals.purchase, Deals.offers, Deals.stage, Deals.quote = nil, nil, nil, nil, nil
     queue.index = queue.index + 1
-    if not queue[queue.index] then Deals:Cancel(message .. " Queue finished.")
+    if not queue[queue.index] then Deals:Cancel(Deals.mode == "gap" and message or message .. " Queue finished.")
     else Update(message) end
 end
 
@@ -173,17 +267,32 @@ local function RunAuctionAction(action, ...)
     return ok
 end
 
+local function AuctionError(code, fallback)
+    if type(code) ~= "number" or (issecretvalue and issecretvalue(code)) then return fallback end
+    local text = AuctionHouseUtil and AuctionHouseUtil.GetErrorText and AuctionHouseUtil.GetErrorText(code)
+    if text and text ~= "" then return text end
+    return ("%s (Auction House error %d)"):format(fallback, code)
+end
+
 local function SendSearch()
     local search = Deals.search
-    if not search or search.sent or not Ready() then return end
+    if not search or search.sent or (Addon.AuctionScanner and Addon.AuctionScanner:HasFlight())
+        or Addon.VendorResaleAuctions.query or not Ready() then return end
     local ah, key = C_AuctionHouse, search.row.key
     if not ah.GetItemKeyInfo(key) then return end
     local price = Enum.AuctionHouseSortOrder and Enum.AuctionHouseSortOrder.Price
     search.sent = true
+    C_Timer.After(8, function()
+        if Deals.search == search and search.sent then AdvanceRow("The live price check timed out.") end
+    end)
     if not RunAuctionAction(ah.SendSearchQuery, key, price and { { sortOrder = price, reverseSort = false } } or {}, true)
         and Deals.search == search then
         AdvanceRow("The Auction House could not check this item.")
     end
+end
+
+function Deals:ResumeSearch()
+    SendSearch()
 end
 
 local function StageItem(message)
@@ -226,6 +335,27 @@ local function ReadSearch(event, key)
     elseif type(key) ~= "table" or KeyString(key) ~= KeyString(row.key) then
         return
     end
+    if row.gap then
+        if not commodity then
+            AdvanceRow("Price Gaps checks commodities.")
+            return
+        end
+        local order = Gaps:LiveOrder(row, Deals:AvailableGold())
+        local full = C_AuctionHouse.HasFullCommoditySearchResults
+        if not order and not search.retried and full and not full(key) then
+            search.retried, search.sent = true, false
+            SendSearch()
+            return
+        end
+        Deals.search = nil
+        if not order then
+            AdvanceRow("The live price gap closed or no units fit your available gold.")
+        else
+            Deals.purchase, Deals.stage = order, "quoteReady"
+            Update("Live gap verified. Get a quote for the discounted units.")
+        end
+        return
+    end
     local offers = LiveOffers(row, commodity)
     local ah = C_AuctionHouse
     local full = commodity and ah.HasFullCommoditySearchResults or ah.HasFullItemSearchResults
@@ -247,27 +377,36 @@ local function ReadSearch(event, key)
 end
 
 function Deals:Prepare(mode, row)
-    if self.scanning or self.queue or self.pending or (not row and #self.rows == 0) then return end
+    local gap = row and row.gap
+    local native = row and Addon.AuctionScanner.job
+    if (not native and ((gap and Gaps.scanning) or (not gap and self.scanning))) or self.queue or self.pending
+        or (not row and #self:VisibleRows() == 0) then return end
+    if row and row.gap then
+        if not row.manual and not Gaps:IsCurrent(row) then Update("Run a new scan or check a specific commodity.", true); return end
+        mode = "gap"
+    end
     local queue = { index = 1 }
     if row then queue[1] = row
     else
-        for _, candidate in ipairs(self.rows) do queue[#queue + 1] = candidate end
+        for _, candidate in ipairs(self:VisibleRows()) do queue[#queue + 1] = candidate end
     end
     self.queue, self.mode = queue, mode
+    Addon.AuctionScanner.last = nil
     Update("Queue ready. Buy Next checks the first item's live price.")
     if row then self:BuyNext() end
 end
 
 local function Acceptable(purchase, total, unitPrice)
     return type(total) == "number" and total > 0 and total <= purchase.cost and total <= Deals:AvailableGold()
-        and total < purchase.vendor * purchase.quantity
+        and (purchase.deal.gap or total < purchase.vendor * purchase.quantity)
         and (not unitPrice or (type(unitPrice) == "number" and unitPrice > 0 and unitPrice <= purchase.unitPrice))
 end
 
 local function CompletePurchase(message)
+    local gap = Deals.pending and Deals.pending.deal.gap
     Deals.pending = nil
     Deals.stage, Deals.quote = nil, nil
-    if not Deals.queue then Update(message); return end
+    if not Deals.queue then Update(message, gap); return end
     if Deals.offers then StageItem(message)
     else AdvanceRow(message) end
 end
@@ -279,8 +418,8 @@ function Deals:BuyNext()
         local search = { row = self.queue[self.queue.index] }
         self.search, self.stage = search, "search"
         Update("Checking live listings…")
-        C_Timer.After(8, function()
-            if self.search == search then AdvanceRow("The live price check timed out.") end
+        C_Timer.After(25, function()
+            if self.search == search and not search.sent then AdvanceRow("The Auction House stayed busy. Check again.") end
         end)
         SendSearch()
     elseif self.stage == "quoteReady" then
@@ -289,11 +428,14 @@ function Deals:BuyNext()
         self.stage = "quote"
         local quoteRequest = {}
         self.quoteRequest = quoteRequest
-        Update("Waiting for the commodity quote…")
-        if not RunAuctionAction(api.StartCommoditiesPurchase, purchase.deal.key.itemID, purchase.quantity) then
-            if self.quoteRequest == quoteRequest then self:Skip("The Auction House could not request a quote.") end
+        -- On Forever the clicked button must remain enabled until the action is sent.
+        local ok = RunAuctionAction(api.StartCommoditiesPurchase, purchase.deal.key.itemID, purchase.quantity)
+        if self.quoteRequest ~= quoteRequest or self.stage ~= "quote" then return end
+        if not ok then
+            self:Skip("The commodity quote call failed. See chat for the client error.")
             return
         end
+        Update("Waiting for the commodity quote…")
         C_Timer.After(8, function()
             if self.quoteRequest == quoteRequest and self.stage == "quote" then self:Skip("The commodity quote timed out.") end
         end)
@@ -321,17 +463,17 @@ function Deals:BuyNext()
         end
         self.pending, self.stage = purchase, nil
         purchase.paid = total
-        Update("Purchase submitted. Waiting for the Auction House…")
         local ok
-        -- Protected purchase calls stay in the user's click handler, like Auctionator's buy dialogs.
+        -- Submit before refreshing the tab, which disables the confirming button.
         if commodity then ok = RunAuctionAction(api.ConfirmCommoditiesPurchase, purchase.deal.key.itemID, purchase.quantity)
         else ok = RunAuctionAction(api.PlaceBid, purchase.auctionID, total) end
         if self.pending ~= purchase then return end
         if not ok then
-            CompletePurchase("The Auction House could not submit the purchase.")
+            CompletePurchase("The purchase call failed. See chat for the client error.")
             if commodity then RunAuctionAction(api.CancelCommoditiesPurchase) end
             return
         end
+        Update("Purchase submitted. Waiting for the Auction House…")
         C_Timer.After(8, function()
             if self.pending == purchase then
                 self.pending = nil
@@ -351,6 +493,7 @@ function Deals:Skip(message)
 end
 
 function Deals:ConnectAuctionator()
+    if Addon:GetAuctionSettings().importAuctionator == false then return false end
     if self.connected then return true end
     local auctionator = Auctionator
     local summary = auctionator and auctionator.IncrementalScan and auctionator.IncrementalScan.Events
@@ -358,18 +501,52 @@ function Deals:ConnectAuctionator()
     if not summary or not summary.ScanComplete or not full or not full.ScanComplete or not auctionator.EventBus then return false end
     local listener = {}
     function listener:ReceiveEvent(event, data)
-        if not Addon:GetVendorDealSettings().enabled then return end
+        if Addon:GetAuctionSettings().importAuctionator == false then return end
+        local dealsEnabled = Addon:GetVendorDealSettings().enabled
         if event == summary.ScanStart or event == full.ScanStart then
-            Deals.snapshot, Deals.scanning = nil, true
-            Deals:Cancel("Auctionator scan in progress…")
+            if Addon.AuctionScanner.job then Addon.AuctionScanner:Stop() end
+            local pending = {}
+            Deals.importing = pending
+            C_Timer.After(60, function()
+                if Deals.importing ~= pending then return end
+                Deals.importing, Deals.scanning, Gaps.scanning = nil, false, false
+                Gaps.status = "Auctionator did not finish. Start a native scan to refresh prices."
+                Update("Auctionator did not finish. Start a native scan to refresh prices.")
+            end)
+            Deals.scanRun = nil
+            Gaps.scanning, Gaps.status = true, "Auctionator scan in progress…"
+            self.marketScope = Addon.VendorResaleMarket:ScanContext()
+            if dealsEnabled then
+                Deals.snapshot, Deals.scanning = nil, true
+                Deals:Cancel("Auctionator scan in progress…")
+            else
+                Update()
+            end
         elseif event == summary.ScanFailed or event == full.ScanFailed then
-            Deals.scanning = false
-            Update("Auctionator's scan did not finish. Run Full Scan again.")
+            Deals.importing = nil
+            self.marketScope = nil
+            Gaps.scanning, Gaps.status = false, "Auctionator's scan did not finish. Check an item or run Full Scan again."
+            if dealsEnabled then
+                Deals.scanning = false
+                Update("Auctionator's scan did not finish. Run Full Scan again.")
+            else
+                Update()
+            end
         elseif type(data) == "table" then
-            BuildSnapshot(data, event == full.ScanComplete)
+            if Addon.AuctionScanner.job then self.marketScope = nil; return end
+            Deals.importing = nil
+            BuildSnapshot(data, event == full.ScanComplete, self.marketScope)
+            self.marketScope = nil
         else
-            Deals.scanning = false
-            Update("Auctionator did not provide scan results.")
+            Deals.importing = nil
+            self.marketScope = nil
+            Gaps.scanning, Gaps.status = false, "Auctionator did not provide scan results."
+            if dealsEnabled then
+                Deals.scanning = false
+                Update("Auctionator did not provide scan results.")
+            else
+                Update()
+            end
         end
     end
     auctionator.EventBus:Register(listener, { summary.ScanStart, summary.ScanComplete, summary.ScanFailed,
@@ -382,7 +559,8 @@ for _, event in ipairs({ "AUCTION_HOUSE_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME
     "ITEM_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_UPDATED", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
     "ITEM_KEY_ITEM_INFO_RECEIVED", "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE",
     "AUCTION_HOUSE_PURCHASE_COMPLETED", "AUCTION_HOUSE_SHOW_ERROR",
-    "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED" }) do
+    "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED",
+    "ADDON_ACTION_BLOCKED", "ADDON_ACTION_FORBIDDEN", "UI_ERROR_MESSAGE" }) do
     frame:RegisterEvent(event)
 end
 
@@ -394,6 +572,7 @@ frame:SetScript("OnEvent", function(_, event, first, second)
             if Addon:GetVendorDealSettings().enabled then Addon:CreateVendorDealsTab() end
         end)
     elseif event == "AUCTION_HOUSE_CLOSED" then
+        Deals.importing = nil
         if Deals.pending then
             Deals:Cancel("Auction House closed during a purchase. Check your gold and auction mail.")
         elseif Deals.queue then
@@ -405,12 +584,30 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         SendSearch()
     elseif event == "ITEM_SEARCH_RESULTS_UPDATED" or event == "COMMODITY_SEARCH_RESULTS_UPDATED" then
         ReadSearch(event, first)
+    elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+        if first ~= addonName or type(second) ~= "string" then return end
+        if Deals.pending and (second:find("PlaceBid", 1, true) or second:find("ConfirmCommoditiesPurchase", 1, true)) then
+            CompletePurchase("WoW blocked the purchase call (" .. second .. ").")
+        elseif Deals.stage == "quote" and second:find("StartCommoditiesPurchase", 1, true) then
+            Deals:Skip("WoW blocked the commodity quote call.")
+        end
+    elseif event == "UI_ERROR_MESSAGE" then
+        if Deals.pending and type(second) == "string" and not (issecretvalue and issecretvalue(second))
+            and (second == ERR_AUCTION_DATABASE_ERROR or second == ERR_AUCTION_HIGHER_BID or second == ERR_ITEM_NOT_FOUND
+                or second == ERR_AUCTION_BID_OWN or second == ERR_NOT_ENOUGH_MONEY or second == ERR_ITEM_MAX_COUNT) then
+            CompletePurchase(second)
+        end
     elseif event == "AUCTION_HOUSE_PURCHASE_COMPLETED" or event == "COMMODITY_PURCHASE_SUCCEEDED" then
         local purchase = Deals.pending
         local commodity = event == "COMMODITY_PURCHASE_SUCCEEDED"
         if purchase and ((commodity and purchase.unitPrice)
             or (not commodity and purchase.auctionID and first == purchase.auctionID)) then
-            CompletePurchase("Purchase confirmed. Collect the auction mail as usual.")
+            if purchase.deal.gap then
+                CompletePurchase("Purchase confirmed. Collect the mail for resale review. Target per item: "
+                    .. GetMoneyString(purchase.target, true) .. ".")
+            else
+                CompletePurchase("Purchase confirmed. Collect the auction mail as usual.")
+            end
             Addon:RecordVendorFlipPurchase(purchase, purchase.paid)
         else
             local auctionInfo = not commodity and first and C_AuctionHouse.GetAuctionInfoByID
@@ -420,7 +617,7 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         end
     elseif Deals.pending and (event == "AUCTION_HOUSE_SHOW_ERROR"
         or (event == "COMMODITY_PURCHASE_FAILED" and Deals.pending.unitPrice)) then
-        CompletePurchase("The Auction House rejected that purchase.")
+        CompletePurchase(AuctionError(first, "The Auction House rejected that purchase."))
     elseif Deals.queue then
         local purchase = Deals.purchase
         local awaitingQuote = Deals.stage == "quote" or Deals.stage == "confirmCommodity"
@@ -439,7 +636,9 @@ frame:SetScript("OnEvent", function(_, event, first, second)
             else
                 Deals:Skip("The new commodity price exceeds the planned price or available gold.")
             end
-        elseif awaitingQuote and (event == "COMMODITY_PRICE_UNAVAILABLE" or event == "AUCTION_HOUSE_SHOW_ERROR") then
+        elseif awaitingQuote and event == "AUCTION_HOUSE_SHOW_ERROR" then
+            Deals:Skip(AuctionError(first, "The Auction House rejected the commodity quote."))
+        elseif awaitingQuote and event == "COMMODITY_PRICE_UNAVAILABLE" then
             Deals:Skip("That commodity quantity is no longer available.")
         end
     end

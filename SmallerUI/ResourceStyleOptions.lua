@@ -67,7 +67,7 @@ function Addon:BuildResourceStyleOptions(page, scope, prefix, look, text)
     end
     local function Input(parent, key, caption, labelX, x, y, low, high)
         UI.Label(parent, caption, labelX, y - 7)
-        local input = CreateFrame("EditBox", prefix .. key, parent, "InputBoxTemplate")
+        local input = UI.EditBox(parent, prefix .. key)
         input:SetPoint("TOPLEFT", x, y)
         input:SetSize(70, 24)
         input:SetAutoFocus(false)

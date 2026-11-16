@@ -156,6 +156,7 @@ local function boot(saved, characterSaved, compatibility)
             return x + width / 2, y + height / 2
         end
         function widget:IsVisible() return self.shown and (not self.parent or self.parent:IsVisible()) end
+        function widget:IsMouseOver() return self.mouseOver == true end
         function widget:SetEnabled(value) self.enabled = value end
         function widget:IsEnabled() return self.enabled ~= false end
         function widget:EnableKeyboard(value) self.keyboardEnabled = value end
@@ -512,6 +513,9 @@ local function boot(saved, characterSaved, compatibility)
     end
     env.DEFAULT_CHAT_FRAME = { AddMessage = function(_, text) messages[#messages + 1] = text end }
     env.SlashCmdList = {}
+    if compatibility and compatibility.panelAtlases then
+        env.C_Texture = { GetAtlasInfo = function() return {} end }
+    end
     local namespace = {}
     for _, source in ipairs(addon_sources) do
         local addon = assert(loadstring(source))
@@ -647,6 +651,32 @@ do
     compact.Click(compactEnv.SmallerUIWhisperPopups)
     check(compactEnv.SmallerUIPartyAlertOptions:IsVisible() and not settings:IsShown(),
         "Whisper Manager links to the chat pop-up settings")
+    check(compactEnv.SmallerUIPartyAlertOptions:GetEffectiveScale() <= compactEnv.UIParent:GetEffectiveScale(),
+        "The alert settings follow the same scale limit as the main window")
+end
+do
+    local alertEnv, alertState, alertEvent, alertTick = boot(nil)
+    local addon = alertState.addon
+    alertEnv.C_ChatInfo = { RegisterAddonMessagePrefix = function() return true end }
+    alertEvent("PLAYER_LOGIN")
+    addon:PreviewPartyAlert()
+    local alert = alertEnv.SmallerUIPartyAlert
+    alertTick(0.12)
+    local message = "Take the left path past the bridge and regroup at the entrance before we pull the next pack."
+    alertEvent("CHAT_MSG_ADDON_LOGGED", "FQOL_POPUP", message, "PARTY", "Vale")
+    alertEvent("CHAT_MSG_ADDON_LOGGED", "FQOL_POPUP", "Ready", "PARTY", "Rowan")
+    alertTick(1.9)
+    check(alert:IsShown() and alert.label:GetText() == message and alert.source:GetText() == "Party · Vale",
+        "A live alert replaces the preview and a long message remains visible beyond the short timeout")
+    local remaining = alert.duration - alert.elapsed
+    alertTick(remaining - 0.1)
+    check(alert.label:GetText() == message and alert:GetAlpha() < 1,
+        "The first alert fades before the next message replaces it")
+    alertTick(0.11)
+    check(alert.source:GetText() == "Party · Rowan" and alert.label:GetText() == "Ready"
+        and alert:GetAlpha() == 0, "Queued alerts start at the beginning of their own fade")
+    alertTick(2)
+    check(not alert:IsShown() and not alert.scripts.OnUpdate, "The alert stops updating when its queue ends")
 end
 check(env.SmallerUIGlobalSlider.template == "UISliderTemplateWithLabels", "Global slider uses the labelled template")
 check(env.SmallerUIKeep_minimap and env.SmallerUIElementInput_minimap, "Minimap size is adjustable")
@@ -746,6 +776,28 @@ near(cancelEnv.MinimapCluster:GetEffectiveScale(), 0.9, "The new individual elem
 
 env, state, event, tick, command = boot(nil)
 check(env.SmallerUIMinimapButton and env.SmallerUIMinimapButton:IsShown(), "Minimap launcher is visible by default")
+env.SmallerUIMinimapButton.scripts.OnEnter(env.SmallerUIMinimapButton)
+local shortcutMenu = env.SmallerUIMinimapMenu
+tick(0.1)
+shortcutMenu.mouseOver = true
+tick(0.25)
+check(shortcutMenu:IsVisible(), "Minimap menu stays open while the pointer crosses to its actions")
+shortcutMenu.mouseOver = false
+tick(0.23)
+check(not shortcutMenu:IsShown(), "Minimap menu closes when the pointer leaves both surfaces")
+env.SmallerUIMinimapButton.scripts.OnEnter(env.SmallerUIMinimapButton)
+for _, action in ipairs(state.widgets) do
+    if action.parent == shortcutMenu and action:GetText() == "Chat search" then
+        state.Click(action)
+        break
+    end
+end
+check(env.SmallerUIChatSearch and env.SmallerUIChatSearch:IsShown() and not shortcutMenu:IsShown(),
+    "Choosing Chat search from the minimap menu opens search and closes the menu")
+check(env.SmallerUIChatSearch:GetHeight() == 125 and not env.SmallerUIChatSearch.previous:IsShown()
+    and env.SmallerUIChatSearch:GetEffectiveScale() == env.UIParent:GetEffectiveScale(),
+    "Empty Chat Search stays compact at the current UI scale")
+env.SmallerUIChatSearch:Hide()
 state.Click(env.SmallerUIMinimapButton)
 panel = env.SmallerUIOptions
 check(panel:IsShown(), "Minimap launcher opens settings")
@@ -755,6 +807,28 @@ command("")
 check(panel:IsShown(), "/sui remains available when the minimap button is hidden")
 state.Click(env.SmallerUIShowMinimap)
 check(env.SmallerUIMinimapButton:IsShown(), "Launcher can be shown again")
+do
+    local nativeEnv, native = boot(nil, nil, { panelAtlases = true })
+    native.geometry = true
+    nativeEnv.Minimap:ClearAllPoints()
+    nativeEnv.Minimap:SetPoint("TOPRIGHT", nativeEnv.UIParent, "TOPRIGHT", -30, -25)
+    nativeEnv.Questie_BaseFrame = nativeEnv.CreateFrame("Frame", nil, nativeEnv.UIParent)
+    nativeEnv.Questie_BaseFrame:SetPoint("TOPRIGHT", -10, -135)
+    nativeEnv.Questie_BaseFrame:SetSize(285, 320)
+    native.addon:UpdateMinimap()
+    local launcher = nativeEnv.SmallerUIMinimapButton
+    launcher.scripts.OnEnter(launcher)
+    local menu = nativeEnv.SmallerUIMinimapMenu
+    local x, y, w, h = menu:GetRect()
+    local tx, ty, tw, th = nativeEnv.Questie_BaseFrame:GetRect()
+    check(menu:IsVisible() and (x + w <= tx or tx + tw <= x or y + h <= ty or ty + th <= y),
+        "The minimap menu can stay clear of the Questie tracker")
+    native.addon:ShowOptions("whispers")
+    local entry = nativeEnv.SmallerUISettings.entries.whispers
+    check(entry.face.atlas == "common-dropdown-c-button-open" and entry.face:IsShown()
+        and nativeEnv.SmallerUIWhisper_position.template == "WowStyle2DropdownTemplate",
+        "The active navigation and dropdown use the reference's native art")
+end
 local angle = env.SmallerUIDB.minimapAngle
 env.SmallerUIMinimapButton.scripts.OnDragStart(env.SmallerUIMinimapButton)
 tick()
@@ -1340,11 +1414,14 @@ sealState.class = "PALADIN"
 sealAddon:SetResourceOption("root", "enabled", true)
 local sealHud, sealCfg = sealAddon:GetResourceDisplay(), sealAddon:GetResourceSettings()
 local sealIcon = sealHud.player.seal
-check(sealIcon:IsShown() and sealIcon.status == "missing" and sealIcon.reminder:GetText() == "!",
-    "Paladins receive a missing-seal reminder before their first observed seal")
+check(sealIcon:IsShown() and sealIcon.status == "missing" and sealIcon.reminder:GetText() == "!"
+    and sealIcon.badge:IsShown() and not sealIcon.activeMark:IsShown()
+    and sealIcon.mouseMotionEnabled and not sealIcon.mouseEnabled,
+    "The missing-seal badge supports hover without capturing clicks")
 sealState.auras.player = { HELPFUL = { { spellId = 20154, name = "Seal of Righteousness", icon = 1234 } } }
 sealEvent("UNIT_AURA", "player")
 check(sealIcon.status == "active" and sealIcon.texture.textureValue == 1234 and not sealIcon.texture.desaturated
+    and not sealIcon.badge:IsShown() and sealIcon.activeMark:IsShown()
     and sealCfg.seal.lastSpellID == 20154, "Active Paladin seals display their own icon and remember their identity")
 sealState.auras.player.HELPFUL[1].icon = privateValue
 sealEvent("UNIT_AURA", "player")
@@ -2006,6 +2083,13 @@ do
     local env, state, event, tick, addon, hud = Fixture()
     check(env.SmallerUIMoveSelection:IsShown() and env.SmallerUIMoveSelection.label:GetText() == "Personal health",
         "Move mode initially highlights and names the current display")
+    state.Click(env.SmallerUIMoveGridToggle)
+    check(env.SmallerUIMoveGrid:IsVisible() and #env.SmallerUIMoveGrid.lines > 0 and not env.SmallerUIMoveGrid.mouseEnabled,
+        "The optional grid paints alignment lines without capturing input")
+    state.Click(env.SmallerUIMoveGridToggle)
+    check(not env.SmallerUIMoveGrid:IsShown() and env.SmallerUIMoveGridToggle:GetText() == "Show grid",
+        "The toolbar hides the grid without leaving Move Mode")
+    state.Click(env.SmallerUIMoveGridToggle)
     local startX, startY = Bounds(hud.player.health)
     local petX, petY = Bounds(hud.pet.health)
     state.mouseDown = true
@@ -2014,16 +2098,18 @@ do
     tick()
     local x, y = Bounds(hud.player.health)
     near(x, petX, "A bar snaps to another bar's edge within eight screen pixels")
-    check(env.SmallerUIMoveVerticalGuide:IsShown() and addon:GetResourceMoveState().snapX == petX,
-        "Active alignment displays a vertical guide at the matched edge")
+    check(env.SmallerUIMoveVerticalGuide:IsShown() and addon:GetResourceMoveState().snapX == petX
+        and env.SmallerUIResourceEditor.hint:GetText() == "Snapped · Shift to release",
+        "Active alignment displays a guide and explains how to release it")
     check(env.SmallerUIMoveSelection.label:GetText() == "Personal health",
         "Independent dragging identifies the selected bar")
     state.shift = true
     tick()
     x = Bounds(hud.player.health)
     near(x, petX - 6, "Shift immediately releases snapping to the original cursor position")
-    check(not env.SmallerUIMoveVerticalGuide:IsShown() and not env.SmallerUIMoveHorizontalGuide:IsShown(),
-        "Shift hides snapping guides")
+    check(not env.SmallerUIMoveVerticalGuide:IsShown() and not env.SmallerUIMoveHorizontalGuide:IsShown()
+        and env.SmallerUIResourceEditor.hint:GetText() == "Snapping paused",
+        "Shift hides snapping guides and shows the temporary pause")
     state.shift = false
     tick()
     x = Bounds(hud.player.health)
@@ -2043,7 +2129,8 @@ do
         "Releasing completes the drag and removes its guides")
     addon:FinishResourceEdit(true)
     local saved = addon:GetResourceSettings().player.health.x
-    check(saved ~= 0 and not env.SmallerUIMoveOverlay:IsShown(), "Done saves the moved bar and clears the selection overlay")
+    check(saved ~= 0 and not env.SmallerUIMoveOverlay:IsShown() and not env.SmallerUIMoveGrid:IsShown(),
+        "Done saves the moved bar and clears the selection and grid overlays")
     local droppedX = Bounds(hud.player.health)
     addon:GetResourceSettings().pet.x = addon:GetResourceSettings().pet.x + 25
     addon:ApplyResources()
@@ -2053,7 +2140,10 @@ do
 
     env, state, event, tick, addon, hud = Fixture()
     local originalPlayerX, originalPetX = addon:GetResourceSettings().player.x, addon:GetResourceSettings().pet.x
-    addon:SetResourceOption("player", "linked", true)
+    state.Click(env.SmallerUIMoveGroup)
+    check(env.SmallerUIResourceEditor.groupState:GetText() == "Grouped"
+        and env.SmallerUIMoveSelection.label:GetText() == "Personal bars",
+        "Grouping updates the toolbar and highlights the whole display")
     hud.partyRoot:Hide()
     local hpX, hpY = Bounds(hud.player.health)
     local powerX, powerY = Bounds(hud.player.power)
@@ -2111,7 +2201,7 @@ do
     tick()
     x = Bounds(hud.player.health)
     near(x, petX, "A six-device-pixel gap snaps with that same pixel factor")
-    near(env.SmallerUIMoveVerticalGuide:GetWidth(), 0.5, "Guide thickness remains one device pixel")
+    near(env.SmallerUIMoveVerticalGuide.texture:GetWidth(), 0.5, "The visible guide remains one device pixel inside its shadow")
     addon:FinishResourceEdit(false)
 
     env, state, event, tick, addon, hud = Fixture()
@@ -2554,7 +2644,7 @@ do
     check(not timer:IsShown(), "Off-hand events do not start the main-hand lane")
     event("PLAYER_SWING", 2, 0)
     tick(0.5)
-    check(timer:IsShown() and timer.bar.dot:IsShown() and not timer.mouseEnabled,
+    check(timer:IsShown() and timer.bar.dot:IsShown() and timer.bar.stop:IsShown() and not timer.mouseEnabled,
         "A main-hand swing shows a click-through line and dot")
     near(timer.bar:GetValue(), 0.25, "Progress is measured against the native interval")
     event("PLAYER_SWING", 1.5, 0)
@@ -2563,7 +2653,8 @@ do
     state.Select(env.SmallerUISwingshape, 2)
     state.Select(env.SmallerUISwingtheme, 2)
     state.Select(env.SmallerUISwingtexture, 3)
-    check(not timer.bar.dot:IsShown() and timer.bar:GetStatusBarTexture().textureValue == addon.resourceTextures[3][3]
+    check(not timer.bar.dot:IsShown() and not timer.bar.stop:IsShown()
+        and timer.bar:GetStatusBarTexture().textureValue == addon.resourceTextures[3][3]
         and timer.bar.barColor[3] == 1, "The filled style applies the chosen theme and texture during a live swing")
     near(timer.bar:GetValue(), 0.5, "Styling a swing does not restart its clock")
     tick(1)
@@ -2906,6 +2997,11 @@ do
         { unitPrice = 30, quantity = 4 },
         { unitPrice = 100, quantity = 12 },
     }
+    local listener, tab, button
+    local function CheckBuyButton()
+        assert(tab.purchase:IsVisible() and tab.purchase:IsEnabled(),
+            "Forever can reject the call if the invoking button was disabled before submission")
+    end
     env.C_AuctionHouse = {
         GetItemKeyInfo = function(key) return { isCommodity = key.itemID == 2 } end,
         IsThrottledMessageSystemReady = function() return true end,
@@ -2918,14 +3014,20 @@ do
         HasFullItemSearchResults = function() return true end,
         GetQuoteDurationRemaining = function() return 20 end,
         StartCommoditiesPurchase = function(...)
+            CheckBuyButton()
             assert(select("#", ...) == 2, "Use the same two-argument commodity request as Auctionator")
             requests.quote = { ... }
         end,
         CancelCommoditiesPurchase = function() cancelled = cancelled + 1 end,
-        ConfirmCommoditiesPurchase = function(id, quantity) purchases[#purchases + 1] = { id, quantity } end,
-        PlaceBid = function(id, cost) purchases[#purchases + 1] = { id, cost } end,
+        ConfirmCommoditiesPurchase = function(id, quantity)
+            CheckBuyButton()
+            purchases[#purchases + 1] = { id, quantity }
+        end,
+        PlaceBid = function(id, cost)
+            CheckBuyButton()
+            purchases[#purchases + 1] = { id, cost }
+        end,
     }
-    local listener, tab, button
     env.Auctionator = {
         IncrementalScan = { Events = { ScanStart = "start", ScanComplete = "complete", ScanFailed = "failed" } },
         FullScan = { Events = { ScanStart = "replicateStart", ScanComplete = "replicateComplete", ScanFailed = "replicateFailed" } },
@@ -2974,11 +3076,14 @@ do
     check(tab.keyboardEnabled and not tab.propagateKeys and #requests == 0,
         "Holding Space does not send a queue action")
     tab.scripts.OnKeyUp(tab, "SPACE")
-    check(#requests == 1, "Releasing Space starts exactly one live check")
+    check(#requests == 1 and not tab.purchase.enabled and not tab.hint:IsShown(),
+        "Releasing Space starts one live check and hides the hint while the queue is waiting")
     event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
     check(deals.purchase.quantity == 2 and deals.purchase.cost == 60,
         "The budget reserves gold and selects only affordable commodity units at profitable tiers")
     state.Click(tab.purchase)
+    check(requests.quote and requests.quote[2] == 2 and deals.stage == "quote" and not tab.purchase:IsEnabled(),
+        "The commodity quote is sent before the client button is disabled")
     event("COMMODITY_PRICE_UPDATED", 31, 62)
     check(cancelled == 1 and deals.queue.index == 2 and #purchases == 0, "A higher commodity quote is cancelled without buying")
     state.Click(tab.cancel)
@@ -2990,7 +3095,8 @@ do
     check(deals.stage == "confirmCommodity" and #purchases == 0, "Quotes wait for an explicit click to purchase")
     money = 70
     event("PLAYER_MONEY")
-    check(not tab.purchase.enabled, "A quote cannot be confirmed if the reserve would be breached")
+    check(not tab.purchase.enabled and tab.hint:GetText() == "Over available gold" and tab.hint:IsShown(),
+        "The queue explains why a quote cannot be confirmed if the reserve would be breached")
     money = 90
     event("PLAYER_MONEY")
     PressSpace()
@@ -3013,7 +3119,7 @@ do
     event("AUCTION_HOUSE_PURCHASE_COMPLETED", 11)
     check(deals.pending and deals.pending.auctionID == 10, "An unrelated purchase event cannot advance the queue")
     state.Click(tab.cancel)
-    check(not deals.queue and deals.pending and not tab.purchase:IsShown() and not tab.keyboardEnabled,
+    check(not deals.queue and deals.pending and not tab.purchase:IsVisible() and not tab.keyboardEnabled,
         "Clear Queue closes the queue while retaining the submitted purchase until the server responds")
     event("AUCTION_HOUSE_PURCHASE_COMPLETED", 10)
     check(purchases[2][1] == 10 and purchases[2][2] == 35 and not deals.pending and tab.all.enabled,
@@ -3029,6 +3135,19 @@ do
     env.C_AuctionHouse.PlaceBid = function() error("Purchase rejected") end
     state.Click(tab.purchase)
     check(not deals.pending and not deals.queue and tab.all.enabled, "A purchase API error releases the controls immediately")
+    state.Click(tab.rows[2].buy)
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    env.AuctionHouseUtil = { GetErrorText = function(code) return code == 13 and "That item is no longer available." end }
+    env.C_AuctionHouse.PlaceBid = function() event("AUCTION_HOUSE_SHOW_ERROR", 13) end
+    state.Click(tab.purchase)
+    check(not deals.pending and deals.status:find("That item is no longer available.", 1, true),
+        "A synchronous Blizzard rejection is visible and is not overwritten by the submitted status")
+    state.Click(tab.rows[2].buy)
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    env.C_AuctionHouse.PlaceBid = function() event("ADDON_ACTION_BLOCKED", "SmallerUI", "C_AuctionHouse.PlaceBid()") end
+    state.Click(tab.purchase)
+    check(not deals.pending and tab.all.enabled and deals.status:find("WoW blocked the purchase call", 1, true),
+        "A blocked action identifies a client restriction and releases the queue")
     state.Click(tab.all)
     tab:Hide()
     check(not tab.keyboardEnabled and not deals.queue, "Closing Vendor Deals releases Space")
@@ -3040,6 +3159,442 @@ do
     runTimers(0)
     check(#deals.rows == 1 and deals.rows[1].price == 75, "The Get All scan compares a stack's per-unit buyout to vendor value")
 
+    local market = addon.VendorResaleMarket
+    local now, faction = 40 * 86400, "Alliance"
+    env.GetServerTime = function() return now end
+    env.UnitFactionGroup = function() return faction end
+    env.GetRealmName = function() return "Forever" end
+    addon:GetVendorDealSettings().enabled = false
+    local first = { [3] = 4, [10] = 800, [17] = 1 }
+    local cheaper = { [3] = 2, [10] = 300, [17] = 1 }
+    listener:ReceiveEvent("replicateStart")
+    listener:ReceiveEvent("replicateComplete", { { replicateInfo = first }, { replicateInfo = cheaper } })
+    runTimers(0)
+    local sample = market:GetLatest().items["1:0:0:0"]
+    check(sample.price == 150 and sample.quantity == 6 and sample.atFloor == 2,
+        "Resale records the lowest per-unit asking price and stock independently of Vendor Deals")
+    now = now + 86400
+    listener:ReceiveEvent("complete", { { itemKey = itemKey, minPrice = 200, totalQuantity = 10 } })
+    runTimers(0)
+    check(market:GetLatest().items["1:0:0:0"].atFloor == nil,
+        "A browse scan's total supply does not stand in for the quantity at its lowest price")
+    local typical, observations, days = market:GetTypicalPrice("1:0:0:0")
+    check(typical == 175 and observations == 2 and days == 2, "Resale compares asks across completed scan days")
+    listener:ReceiveEvent("start")
+    listener:ReceiveEvent("failed")
+    check(market:GetLatest().items["1:0:0:0"].price == 200, "A failed scan keeps the last completed market snapshot")
+    listener:ReceiveEvent("complete", {})
+    runTimers(0)
+    check(next(market:GetLatest().items) == nil and market:GetTypicalPrice("1:0:0:0") == 175,
+        "An absent item drops out of the current market without erasing its asking-price history")
+    faction = "Horde"
+    check(market:GetLatest() == nil and market:GetTypicalPrice("1:0:0:0") == nil,
+        "Resale does not reuse faction market data for another faction")
+
+    addon:GetVendorDealSettings().enabled = true
+    money, now = 1000, 60 * 86400
+    local gaps = addon.AuctionPriceGaps
+    local function observeCloth(price)
+        listener:ReceiveEvent("complete", { { itemKey = commodityKey, minPrice = price, totalQuantity = 50 } })
+        runTimers(0)
+    end
+    observeCloth(25)
+    now = now + 86400
+    observeCloth(25)
+    now = now + 86400
+    observeCloth(15)
+    state.Click(tab.mode)
+    check(#gaps.rows == 1 and gaps.rows[1].price == 15 and gaps.rows[1].target == 25
+        and tab.reference:GetText() == "Resale / unit" and tab.rows[1].buy:GetText() == "Check",
+        "Price Gaps shows scan lows against a multi-day resale reference in the Auction House tab")
+    commodityResults = {
+        { unitPrice = 25, quantity = 50 }, { unitPrice = 15, quantity = 4 }, { unitPrice = 20, quantity = 8 },
+    }
+    env.C_AuctionHouse.CalculateCommodityDeposit = function(id, duration, quantity)
+        assert(id == 2 and duration == 2 and quantity == 12)
+        return 100
+    end
+    state.Click(tab.rows[1].buy)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
+    check(deals.stage == "quoteReady" and deals.purchase.quantity == 12 and deals.purchase.cost == 220
+        and deals.purchase.profit == 65 and deals.purchase.target == 25 and deals.purchase.deposit == 100,
+        "Live tiers combine the 15c and 20c groups, cap the price, and show after-cut profit and deposit separately")
+    state.Click(tab.purchase)
+    event("COMMODITY_PRICE_UPDATED", 21, 221)
+    check(not deals.queue and gaps.status:find("exceeds", 1, true), "A worse market quote ends the gap purchase")
+    state.Click(tab.rows[1].buy)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
+    state.Click(tab.purchase)
+    event("COMMODITY_PRICE_UPDATED", 20, 220)
+    local flips = addon.character.vendorFlipInventory
+    local before = flips and #flips.receipts or 0
+    state.Click(tab.purchase)
+    event("COMMODITY_PURCHASE_SUCCEEDED", 2)
+    local receipts = addon.character.vendorFlipInventory.receipts
+    check(gaps.status:find("Target per item: 25c", 1, true) and #receipts == before + 1
+        and receipts[#receipts].resale and receipts[#receipts].resale.target == 25,
+        "A confirmed gap purchase saves the target for resale when collected from the mail")
+    commodityResults[2].containsOwnerItem = true
+    state.Click(tab.rows[1].buy)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
+    check(not deals.queue, "A price tier containing the player's own cheapest stock is skipped")
+    now = now + 901
+    addon:RefreshVendorDealsTab()
+    check(not tab.rows[1].buy:IsEnabled() and tab.gapCheck:IsEnabled(), "Stale scan leads keep the direct item check available")
+    tab.gapInput.ClearFocus = function() end
+    tab.gapInput:SetText("2")
+    state.Click(tab.gapCheck)
+    check(deals.search and deals.search.row.manual and deals.search.row.key.itemID == 2,
+        "Checking a commodity by item ID starts a direct price check")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    local scanner, market, deals = addon.AuctionScanner, addon.VendorResaleMarket, addon.VendorDeals
+    local zero, timers, requests, browse, tiers = {}, {}, {}, {}, {}
+    local now, full = 80 * 86400, false
+    local cloth, weapon, absent, stock = { itemID = 1 }, { itemID = 2 }, { itemID = 3 }, { itemID = 4 }
+    env.GetServerTime = function() return now end
+    env.GetMoney = function() return 5000 end
+    env.GetMoneyString = function(copper) return copper .. "c" end
+    env.C_Timer = { After = function(delay, callback)
+        if delay == 0 then zero[#zero + 1] = callback else timers[#timers + 1] = { delay, callback } end
+    end }
+    local function flush()
+        local loops = 0
+        while #zero > 0 do
+            local current = zero
+            zero = {}
+            for _, callback in ipairs(current) do callback() end
+            loops = loops + 1
+            assert(loops < 30, "Auction scan timers must settle")
+        end
+    end
+    env.C_Item = {
+        GetItemInfo = function(id)
+            id = tonumber(id) or tonumber(id:match("item:(%d+)"))
+            return "Item " .. id, "item:" .. id, 1, 0, nil, nil, nil, 20, "", nil, 50, nil, nil, 0
+        end,
+        GetItemInfoInstant = function(id) return nil, nil, nil, nil, nil, id == 2 and 2 or 7 end,
+    }
+    env.C_AuctionHouse = {
+        MakeItemKey = function(id) return { itemID = id } end,
+        GetItemKeyInfo = function(key) return { itemName = "Item " .. key.itemID, isCommodity = key.itemID ~= 2 } end,
+        IsThrottledMessageSystemReady = function() return true end,
+        SendBrowseQuery = function(query) requests[#requests + 1] = { "browse", query } end,
+        GetBrowseResults = function() return browse end,
+        HasFullBrowseResults = function() return full end,
+        RequestMoreBrowseResults = function() requests[#requests + 1] = { "page" } end,
+        SendSearchQuery = function(key) requests[#requests + 1] = { "item", key } end,
+        GetNumCommoditySearchResults = function() return #tiers end,
+        GetCommoditySearchResultInfo = function(_, index) return tiers[index] end,
+        HasFullCommoditySearchResults = function() return true end,
+        CalculateCommodityDeposit = function() return 5 end,
+    }
+    env.AuctionHouseFrame = env.CreateFrame("Frame")
+    event("AUCTION_HOUSE_SHOW")
+    flush()
+    local tab = env.SmallerUIAuctionDeals
+    local launcher
+    for _, widget in ipairs(state.widgets) do
+        if widget:GetParent() == env.AuctionHouseFrame and widget:GetText() == "Vendor Deals" then launcher = widget end
+    end
+    check(env.Auctionator == nil and env.LibStub == nil and launcher and not tab:IsShown(),
+        "Forever QoL supplies its own Auction House launcher without Auctionator or LibAHTab")
+    state.Click(launcher)
+    tab:SetHeight(320)
+    addon:RefreshVendorDealsTab()
+    check(tab.visibleRows == 4, "The standalone survey reserves room for progress and the purchase footer on a short viewport")
+    tab.progress:SetWidth(400)
+    state.Click(tab.scanAll)
+    check(requests[1][1] == "browse" and #requests[1][2].itemClassFilters == 0, "Scan All issues a native browse query")
+    check(tab.progress:IsShown() and tab.progress.time:GetText() == "0s elapsed" and not scanner:GetProgress().fraction,
+        "The first broad scan shows activity and elapsed time with an unknown size")
+    browse = { { itemKey = cloth, minPrice = 12, totalQuantity = 10 }, { itemKey = weapon, minPrice = 20, totalQuantity = 1 },
+        { itemKey = absent, minPrice = 25, totalQuantity = 4 } }
+    full = true
+    event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    flush()
+    check(#deals.rows == 3 and market:GetLatest().items["2:0:0:0"].at == now,
+        "The native full scan populates Vendor Deals and the shared market")
+    addon:ShowOptions("vendorDeals")
+    local min = env.SmallerUIVendorMinimum
+    min:SetText("35")
+    min.scripts.OnEnterPressed(min)
+    check(#deals:VisibleRows() == 1, "The Auction House setting filters vendor leads by minimum profit")
+    min:SetText("0")
+    min.scripts.OnEnterPressed(min)
+    check(tab.progress.fill:GetWidth() == 396 and tab.progress.time:GetText():find("Complete", 1, true)
+        and not tab.progress.scripts.OnUpdate, "A successful scan fills the track and stops animating")
+    local old = now
+    now, full = now + 20, false
+    state.Click(tab.scanCategory)
+    check(requests[#requests][2].itemClassFilters[1].classID == 7, "Scan Category sends a server-side class filter")
+    browse = { { itemKey = cloth, minPrice = 15, totalQuantity = 8 } }
+    event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(scanner.job and tab.rows[1].buy:IsEnabled() and market:GetLatest().items["1:0:0:0"].price == 12,
+        "A scan page exposes candidates before committing the completed history")
+    state.Click(tab.rows[1].buy)
+    flush()
+    check(requests[#requests][1] == "item" and requests[#requests][2].itemID == 1,
+        "A player check preempts the next browse page")
+    tiers = { { unitPrice = 15, quantity = 8 } }
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 1)
+    check(deals.stage == "quoteReady", "The direct check still reaches the existing purchase quote")
+    deals:Cancel()
+    flush()
+    check(requests[#requests][1] == "page", "Browse paging resumes after the purchase check closes")
+    full = true
+    event("AUCTION_HOUSE_BROWSE_RESULTS_ADDED", {})
+    flush()
+    local snapshot = market:GetLatest()
+    check(snapshot.items["1:0:0:0"].price == 15 and snapshot.items["1:0:0:0"].at == now
+        and snapshot.items["2:0:0:0"].at == old and snapshot.items["3:0:0:0"] == nil,
+        "A complete category scan invalidates absent covered items and preserves unrelated prices with their age")
+    full = false
+    state.Click(tab.scanCategory)
+    browse = { { itemKey = cloth, minPrice = 3, totalQuantity = 9 } }
+    event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    state.Click(tab.stopScan)
+    flush()
+    check(not scanner.job and market:GetLatest() == snapshot and deals.rows[1].price == 15,
+        "Stopping after a preview preserves the last completed prices and restores the prior rows")
+    check(tab.progress.time:GetText() == "Stopped" and not tab.progress.scripts.OnUpdate,
+        "A stopped scan shows its outcome without a completion animation")
+    state.Click(tab.scanCategory)
+    event("AUCTION_HOUSE_BROWSE_FAILURE")
+    flush()
+    check(not scanner.job and market:GetLatest() == snapshot and scanner.last:find("Browse failed", 1, true),
+        "A rejected request preserves the completed snapshot and clears the scan")
+    state.Click(tab.mode)
+    tab.gapInput:SetText("1")
+    state.Click(tab.watch)
+    state.Click(tab.scanAll)
+    tiers = { { unitPrice = 15, quantity = 4 }, { unitPrice = 25, quantity = 50 } }
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 1)
+    flush()
+    check(#scanner:Watchlist() == 1 and addon.AuctionPriceGaps.rows[1].target == 25
+        and market:GetLatest().items["1:0:0:0"].atFloor == 4 and scanner.last:find("1 request in", 1, true),
+        "Watchlist scans read real price tiers and publish a gap in one item request")
+    scanner:Start("Watchlist", nil, { cloth, absent }, true)
+    state.now = state.now + 4
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 1)
+    flush()
+    check(tab.progress.fill:GetWidth() == 198 and tab.progress.time:GetText() == "~4s left"
+        and tab.progress.label:GetText():find("1 / 2 checked", 1, true),
+        "A known-size scan fills to the checked fraction and estimates remaining time")
+    state.now = state.now + 1
+    tab.progress.scripts.OnUpdate(tab.progress, 0.1)
+    check(tab.progress.time:GetText() == "~3s left" and tab.progress.fill:GetWidth() == 198,
+        "The estimate counts down while the completed fraction waits for the next response")
+    state.Click(env.SmallerUIAuctionETA)
+    check(tab.progress.time:GetText() == "5s elapsed", "The ETA switch keeps checked progress and shows elapsed time")
+    state.Click(env.SmallerUIAuctionProgressBar)
+    check(not tab.progress:IsShown() and tab.status:GetText():find("items checked", 1, true),
+        "The progress-bar switch falls back to readable scan status")
+    state.Click(env.SmallerUIAuctionProgressBar)
+    state.Click(env.SmallerUIAuctionETA)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 3)
+    flush()
+    full = false
+    scanner:Start("All Categories")
+    state.now = state.now + 2
+    browse = { { itemKey = cloth, minPrice = 15, totalQuantity = 8 } }
+    event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(scanner:GetProgress().estimated and tab.progress.time:GetText() == "~33% · ~4s left",
+        "A repeat browse estimates progress from the most recent completed scan of that scope")
+    scanner:Stop()
+    flush()
+    env.MerchantFrame = env.CreateFrame("Frame")
+    env.MerchantFrame.selectedTab = 1
+    env.MerchantFrame.GetRight = function() return 420 end
+    env.MerchantFrame.GetLeft = function() return 60 end
+    env.GetMerchantNumItems = function() return 1 end
+    env.GetMerchantItemLink = function() return "item:4" end
+    env.GetMerchantItemID = function() return stock.itemID end
+    env.C_MerchantFrame = { GetItemInfo = function() return { name = "Vendor stock", price = 1, stackCount = 1 } end }
+    event("MERCHANT_SHOW")
+    flush()
+    event("MERCHANT_CLOSED")
+    local resaleLauncher = env.SmallerUIResaleAuctionButton
+    state.Click(resaleLauncher)
+    local resalePanel = env.SmallerUIVendorResaleAuctions
+    state.Click(resalePanel.refresh)
+    check(requests[#requests][2].itemID == 4, "Vendor Resale refreshes stock remembered from visits without requiring a purchase")
+    check(resalePanel.progress:IsShown() and resalePanel.progress.label:GetText():find("0 / 1 checked", 1, true),
+        "The resale stock refresh uses the same progress component")
+    tiers = { { unitPrice = 200, quantity = 5 } }
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 4)
+    flush()
+    check(market:GetLatest().items["4:0:0:0"].price == 200 and market:GetLatest().items["2:0:0:0"].at == old,
+        "The vendor stock refresh updates the shared price without touching unrelated items")
+
+    local results = { { itemKey = cloth, minPrice = 15, totalQuantity = 10 },
+        { itemKey = weapon, minPrice = 19, totalQuantity = 1 } }
+    state.Click(tab.mode)
+    state.Click(tab.scanAll)
+    browse, full = results, true
+    event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    flush()
+    local nativeRows = deals.rows
+    local listener
+    env.Auctionator = {
+        IncrementalScan = { Events = { ScanStart = "start", ScanComplete = "complete", ScanFailed = "failed" } },
+        FullScan = { Events = { ScanStart = "replicate", ScanComplete = "replicated", ScanFailed = "replicateFailed" } },
+        EventBus = { Register = function(_, target) listener = target end },
+    }
+    deals:ConnectAuctionator()
+    listener:ReceiveEvent("start")
+    listener:ReceiveEvent("complete", results)
+    flush()
+    check(#nativeRows == #deals.rows and nativeRows[1].key.itemID == deals.rows[1].key.itemID
+        and nativeRows[1].price == deals.rows[1].price and nativeRows[2].price == deals.rows[2].price,
+        "Native browse and optional Auctionator import yield the same vendor candidates for equivalent data")
+    state.Click(env.SmallerUIAuctionImport)
+    local saved = market:GetLatest()
+    listener:ReceiveEvent("complete", {})
+    flush()
+    check(saved == market:GetLatest(), "Turning off Auctionator import preserves prices and ignores its later events")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    local resale, market, sales = addon.VendorResale, addon.VendorResaleMarket, addon.VendorResaleAuctions
+    local now, gold, held, cost, duration = 2000000, 2000, 0, 200, 2
+    local key = { itemID = 91 }
+    env.GetServerTime = function() return now end
+    env.GetMoney = function() return gold end
+    env.GetMoneyString = function(copper) return copper .. "c" end
+    env.C_Timer = { After = function(delay, callback) if delay == 0 then callback() end end }
+    env.MerchantFrame = env.CreateFrame("Frame")
+    env.MerchantFrame.selectedTab = 1
+    env.MerchantFrame.GetRight = function() return 420 end
+    env.MerchantFrame.GetLeft = function() return 60 end
+    env.GetMerchantNumItems = function() return 1 end
+    env.GetMerchantItemID = function() return 91 end
+    env.GetMerchantItemLink = function() return "item:91" end
+    env.GetMerchantItemMaxStack = function() return 20 end
+    env.C_MerchantFrame = { GetItemInfo = function() return { name = "Thread", price = cost,
+        stackCount = 2, numAvailable = 3, isPurchasable = true } end }
+    env.C_Item = {
+        GetItemCount = function() return held end,
+        GetItemInfo = function() return "Thread", "item:91", 1, 1, nil, nil, nil, 20, "", nil, 5, nil, nil, 0 end,
+    }
+    env.BuyMerchantItem = function(index, quantity)
+        assert(index == 1 and quantity == 2, "Buy one two-item vendor pack")
+        held, gold = held + quantity, gold - cost
+    end
+    env.Enum.ItemCommodityStatus = { Commodity = 2, Unknown = 0 }
+    env.ItemLocation = { CreateFromBagAndSlot = function(_, bag, slot) return { bag = bag, slot = slot } end }
+    env.C_Container = {
+        GetContainerNumSlots = function(bag) return bag == 0 and 1 or 0 end,
+        GetContainerItemInfo = function() return held > 0 and { itemID = 91, stackCount = held } or nil end,
+    }
+    env.C_AuctionHouse = {
+        MakeItemKey = function() return key end,
+        GetItemKeyFromItem = function() return key end,
+        GetItemKeyInfo = function() return { isCommodity = true } end,
+        GetItemCommodityStatus = function() return 2 end,
+        IsThrottledMessageSystemReady = function() return true end,
+        SendSearchQuery = function(itemKey) assert(itemKey == key) end,
+        GetNumCommoditySearchResults = function() return 1 end,
+        GetCommoditySearchResultInfo = function() return { unitPrice = 220, quantity = 8 } end,
+        CalculateCommodityDeposit = function(_, value, count) assert(value == duration and count == 2); return 5 end,
+        PostCommodity = function(_, value, quantity, price)
+            assert(value == duration and price == 220)
+            held = held - quantity
+        end,
+    }
+    local scan = market:StartScan(true)
+    market:AddObservation(scan, "91:0:0:0", 200, 2)
+    market:SaveScan(scan)
+    event("MERCHANT_SHOW")
+    local panel, button = env.SmallerUIVendorResale, env.SmallerUIResaleDealsButton
+    check(panel:IsShown() and button:GetText() == "Resale Deals (1)" and panel.offer.profit == 180,
+        "A fresh profitable vendor pack automatically opens the merchant resale panel")
+    check(panel._points[1][1] == "TOPLEFT" and panel._points[1][2] == env.MerchantFrame,
+        "The resale review anchors beside the merchant when space permits")
+    addon:ShowOptions("vendorDeals")
+    state.Click(env.SmallerUIResaleAutoOpen)
+    event("MERCHANT_CLOSED")
+    event("MERCHANT_SHOW")
+    check(not panel:IsShown() and button:IsShown(), "Disabling automatic resale keeps the merchant launcher available")
+    state.Click(env.SmallerUIResaleAutoOpen)
+    duration = 3
+    state.Select(env.SmallerUIResaleDuration, 3)
+    check(panel.details:GetText():find("24-hour deposit", 1, true), "The listing duration updates the merchant deposit estimate")
+    env.UIParent:SetSize(720, 470)
+    event("DISPLAY_SIZE_CHANGED")
+    check(panel._points[1][1] == "CENTER" and panel:GetHeight() * panel:GetScale() < env.UIParent:GetHeight(),
+        "The resale panel fits a compact viewport when both sides of the merchant are occupied")
+    state.Click(button)
+    event("MERCHANT_UPDATE")
+    check(not panel:IsShown(), "Merchant updates respect a dismissed resale panel")
+    state.Click(button)
+    resale:Settings().minimum = 181
+    addon:RefreshVendorResale()
+    check(not panel.offer, "The configured threshold filters by estimated profit per pack")
+    resale:Settings().minimum = 100
+    addon:RefreshVendorResale()
+    state.Click(panel.buy)
+    check(held == 0 and panel.buy:GetText() == "Confirm Buy", "Vendor resale displays a confirmation before buying")
+    cost = 210
+    event("MERCHANT_UPDATE")
+    check(panel.buy:GetText() == "Buy…" and held == 0, "A changed merchant price invalidates the old confirmation")
+    cost = 200
+    event("MERCHANT_UPDATE")
+    state.Click(panel.buy)
+    state.Click(panel.buy)
+    event("BAG_UPDATE_DELAYED")
+    local ledger = resale:Ledger()
+    check(#ledger.purchases == 1 and ledger.purchases[1].quantity == 2 and ledger.purchases[1].unitCost == 100,
+        "A confirmed vendor purchase saves actual quantity and acquisition cost")
+    event("MERCHANT_CLOSED")
+    check(not panel:IsShown() and not button:IsShown(), "The merchant resale controls close with the merchant")
+    env.AuctionHouseFrame = env.CreateFrame("Frame")
+    event("AUCTION_HOUSE_SHOW")
+    state.Click(env.SmallerUIResaleAuctionButton)
+    local auctionPanel = env.SmallerUIVendorResaleAuctions
+    state.Click(auctionPanel.check)
+    event("COMMODITY_SEARCH_RESULTS_UPDATED", 91)
+    check(sales.quote.price == 220 and sales.quote.deposit == 5 and sales.quote.profit == 218
+        and sales.quote.hours == 24 and not auctionPanel.post:IsShown() and not sales:CanPost(),
+        "Live resale review gets the current price and native deposit with posting off by default")
+    resale:Settings().assistedPosting = true
+    addon:RefreshVendorResaleAuctions()
+    state.Click(auctionPanel.post)
+    event("AUCTION_HOUSE_AUCTION_CREATED", 23)
+    check(#ledger.purchases == 0 and #ledger.listings == 1, "An explicitly posted resale is recorded after the item leaves the bags")
+    env.GetInboxNumItems = function() return 1 end
+    env.GetInboxHeaderInfo = function() return nil, nil, "Auction House", "Sold: Thread", 423, 0, 30, 0 end
+    env.GetInboxInvoiceInfo = function() return "seller", "Thread", nil, 0, 440, 5, 22 end
+    state.Click(env.SmallerUIResaleTrackSales)
+    event("MAIL_INBOX_UPDATE")
+    check(#ledger.outcomes == 0 and #ledger.listings == 1, "Auction mail matches pause while sale tracking is disabled")
+    state.Click(env.SmallerUIResaleTrackSales)
+    event("MAIL_INBOX_UPDATE")
+    event("MAIL_INBOX_UPDATE")
+    check(#ledger.listings == 0 and #ledger.outcomes == 1 and ledger.outcomes[1].profit == 218,
+        "A matching sale invoice records realized profit once, excluding the refunded deposit")
+    ledger.listings[1] = { itemID = 91, name = "Thread", quantity = 2, unitCost = 100, price = 220, deposit = 5, at = now }
+    event("MAIL_INBOX_UPDATE")
+    check(#ledger.listings == 1 and #ledger.outcomes == 1, "An old invoice cannot settle a subsequent identical listing")
+    ledger.listings[1] = { itemID = 91, name = "Thread", quantity = 2, unitCost = 100, price = 220, deposit = 13, at = now }
+    now = now + 8 * 3600
+    env.AUCTION_EXPIRED_MAIL_SUBJECT = "Auction expired: %s"
+    env.GetInboxHeaderInfo = function() return nil, nil, "Auction House", "Auction expired: Thread", 0, 0, 30, 1 end
+    env.GetInboxInvoiceInfo = function() end
+    env.GetInboxItem = function() return "Thread", 91, nil, 2 end
+    event("MAIL_INBOX_UPDATE")
+    check(#ledger.outcomes == 2 and ledger.outcomes[2].profit == -13 and ledger.outcomes[2].cost == 200,
+        "An exact expiration records only the loss of the deposit while the item is returned")
+    state.Click(auctionPanel.history)
+    check(auctionPanel.details:GetText():find("Realized loss: 13c", 1, true), "Sale History displays the outcome and its realized loss")
+    now = now + 86401
+    event("MERCHANT_SHOW")
+    check(not panel:IsShown() and button:GetText() == "Resale Deals", "Stale market prices do not automatically open the window")
 end
 
 do
@@ -3168,7 +3723,9 @@ do
     check(not review.sell.enabled and not review.rows[1].toggle:GetChecked(), "Deselect All clears the entire review")
     state.Click(review.selectAll)
     state.Click(review.rows[1].toggle)
-    check(not review.selected["new-a"] and review.selected["new-c"], "An individual toggle leaves other selections intact outside the search")
+    check(not review.selected["new-a"] and review.selected["new-c"]
+        and review.total:GetText() == "Vendor total: 55c",
+        "Review totals include selected stacks outside the search and exclude unselected stacks")
     state.Click(review.cancel)
     check(#sold == 0 and not review:IsShown(), "Cancelling does not sell anything")
 
@@ -3228,6 +3785,19 @@ do
     event("BAG_UPDATE_DELAYED")
     check(not flips:SellableStacks()["unrelated-mail"],
         "An unrelated identical stack cannot be flagged while the actual flip invoice is still in the inbox")
+
+    clock = clock + 900
+    addon:RecordVendorFlipPurchase({ deal = { key = { itemID = 52 }, gap = true, name = "Amber Ring" },
+        quantity = 2, unitPrice = 20, target = 25 }, 40)
+    local index = #mail + 1
+    mail[index] = { at = clock, id = 52, attachments = { 2 }, paid = 40 }
+    env.TakeInboxItem(index, 1)
+    bags[0][7] = stack("gap-stock", 52, 2)
+    table.remove(mail, index)
+    event("MAIL_INBOX_UPDATE")
+    local resale = addon.VendorResale:Ledger().purchases[1]
+    check(resale and resale.quantity == 2 and resale.unitCost == 20 and resale.target == 25
+        and not flips:SellableStacks()["gap-stock"], "Collected gap stock goes to the Auction House review instead of merchant liquidation")
 end
 
 do

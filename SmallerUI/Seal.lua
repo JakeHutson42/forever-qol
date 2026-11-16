@@ -4,6 +4,13 @@ local driver = CreateFrame("Frame")
 local seals = { 20154, 21084, 21082, 20163, 20375, 20164, 20165, 20166, 31801, 53736, 31892, 53720 }
 local sealIDs, names = {}, {}
 local icon, dragging, pendingSeal, knownSeal
+local sealStyles = {
+    active = { edge = { 0.43, 0.78, 0.58, 1 }, text = "", tip = "Active seal" },
+    missing = { edge = { 0.90, 0.59, 0.26, 1 }, fill = { 0.23, 0.105, 0.035, 1 },
+        ink = { 1, 0.82, 0.48 }, text = "!", tip = "No seal active" },
+    unknown = { edge = { 0.52, 0.67, 0.82, 1 }, fill = { 0.08, 0.14, 0.21, 1 },
+        ink = { 0.84, 0.92, 1 }, text = "?", tip = "Seal status unavailable" },
+}
 local function Public(value) return not issecretvalue or not issecretvalue(value) end
 local function Number(value)
     return Public(value) and type(value) == "number" and value == value and math.abs(value) < math.huge
@@ -111,16 +118,24 @@ function Addon:LayoutSealIndicator(view, editing)
             icon:SetPoint("CENTER", UIParent, "CENTER", cfg.x / scale, cfg.y / scale)
         end
     end
-    icon:SetSize(cfg.size, cfg.size)
-    icon:EnableMouse(editing and self:IsPaladin())
+    local size = cfg.size
+    icon:SetSize(size, size)
+    local badge = math.min(size - 1, math.max(7, math.min(20, math.floor(size * 0.54 + 0.5))))
+    icon.badge:SetSize(badge, badge)
+    icon.reminder:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", math.max(7, math.min(15, badge - 2)),
+        badge >= 12 and "OUTLINE" or "")
+    local markSize = math.min(10, math.max(4, size * 0.32))
+    icon.activeMark:SetSize(markSize, markSize)
+    local paladin = self:IsPaladin()
+    icon:SetMouseClickEnabled(editing and paladin)
+    icon:SetMouseMotionEnabled(paladin)
 end
 
 function Addon:CreateSealIndicator(view)
     if icon then return end
     icon = CreateFrame("Frame", "SmallerUISealIndicator", view, "BackdropTemplate")
     view.seal = icon
-    icon:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-    icon:SetBackdropColor(0.03, 0.04, 0.05, 1)
+    Addon.OptionsUI.Plate(icon, { 0.046, 0.069, 0.080, 1 })
     icon:SetMovable(true)
     icon:SetClampedToScreen(true)
     icon:RegisterForDrag("LeftButton")
@@ -128,7 +143,15 @@ function Addon:CreateSealIndicator(view)
     icon.texture:SetPoint("TOPLEFT", 2, -2)
     icon.texture:SetPoint("BOTTOMRIGHT", -2, 2)
     icon.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    icon.reminder = icon:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    icon.activeMark = icon:CreateTexture(nil, "OVERLAY")
+    icon.activeMark:SetTexture("Interface\\AddOns\\SmallerUI\\Media\\TrimJewel.tga")
+    icon.activeMark:SetPoint("BOTTOMRIGHT", -1, 1)
+    icon.activeMark:SetVertexColor(0.65, 1, 0.78)
+    icon.badge = CreateFrame("Frame", nil, icon, "BackdropTemplate")
+    icon.badge:SetPoint("BOTTOMRIGHT", -1, 1)
+    icon.badge:EnableMouse(false)
+    Addon.OptionsUI.Backdrop(icon.badge, { 0.10, 0.12, 0.13, 1 })
+    icon.reminder = icon.badge:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     icon.reminder:SetPoint("CENTER")
     icon:SetScript("OnDragStart", function(self)
         if not Addon:IsEditingResources() or InCombatLockdown() then return end
@@ -139,8 +162,9 @@ function Addon:CreateSealIndicator(view)
         if button == "LeftButton" then Addon:SelectMoveElement("seal", "seal") end
     end)
     icon:SetScript("OnEnter", function(self)
+        if not self.status then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.status == "active" and "Active seal" or self.status == "missing" and "Reactivate your seal" or "Seal status unavailable")
+        GameTooltip:SetText(sealStyles[self.status].tip)
         GameTooltip:Show()
     end)
     icon:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -215,9 +239,20 @@ function Addon:UpdateSealIndicator()
     icon.texture:SetTexture(texture)
     icon.texture:SetDesaturated(active == nil)
     icon.texture:SetAlpha(active and 1 or 0.45)
-    icon.status = active and "active" or unknown and "unknown" or "missing"
-    icon.reminder:SetText(active and "" or unknown and "?" or "!")
-    icon:SetBackdropBorderColor(active and 0.2 or 0.85, active and 0.75 or 0.67, active and 0.4 or 0.3, 1)
+    local status = active and "active" or unknown and "unknown" or "missing"
+    if icon.status ~= status then
+        icon.status = status
+        local style = sealStyles[status]
+        icon:SetBackdropBorderColor(unpack(style.edge))
+        icon.activeMark:SetShown(status == "active")
+        icon.badge:SetShown(status ~= "active")
+        icon.reminder:SetText(style.text)
+        if style.fill then
+            icon.badge:SetBackdropColor(unpack(style.fill))
+            icon.badge:SetBackdropBorderColor(unpack(style.edge))
+            icon.reminder:SetTextColor(unpack(style.ink))
+        end
+    end
 end
 
 local function RecheckAfterCast(spell)

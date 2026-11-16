@@ -2,6 +2,10 @@ local _, Addon = ...
 local overlay, selection, drag, selected, selectedName
 local toolbar, activeScope, activeKind
 local WHITE = "Interface\\Buttons\\WHITE8X8"
+local ENAMEL = "Interface\\AddOns\\SmallerUI\\Media\\Foundry.tga"
+local JEWEL = "Interface\\AddOns\\SmallerUI\\Media\\TrimJewel.tga"
+local WIDTH, HEIGHT = 568, 135
+local snapHint = "Hold Shift to bypass snapping"
 local function Number(value)
     return (not issecretvalue or not issecretvalue(value)) and type(value) == "number"
         and value == value and math.abs(value) < math.huge
@@ -16,6 +20,33 @@ local function Rect(frame)
     local scale = frame:GetEffectiveScale()
     if not Number(x) or not Number(y) or not Number(width) or not Number(height) or not Number(scale) or scale <= 0 then return end
     return { x = x * scale, y = y * scale, width = width * scale, height = height * scale }
+end
+
+local function DrawGrid(grid)
+    local screen = Rect(UIParent)
+    if not screen then return end
+    local spacing, pixel = 32, Pixel()
+    local used = 0
+    local function Axis(vertical, span, length)
+        local count = math.floor((span - pixel) / (2 * spacing))
+        for step = -count, count do
+            used = used + 1
+            local line = grid.lines[used]
+            if not line then
+                line = grid:CreateTexture(nil, "ARTWORK")
+                grid.lines[used] = line
+            end
+            local offset = math.floor((span / 2 + step * spacing) / pixel + 0.5) * pixel
+            line:ClearAllPoints()
+            line:SetPoint("BOTTOMLEFT", vertical and offset or 0, vertical and 0 or offset)
+            line:SetSize(vertical and pixel or length, vertical and length or pixel)
+            line:SetColorTexture(0.85, 0.79, 0.64, step == 0 and 0.50 or step % 4 == 0 and 0.32 or 0.17)
+            line:Show()
+        end
+    end
+    Axis(true, screen.width, screen.height)
+    Axis(false, screen.height, screen.width)
+    for index = used + 1, #grid.lines do grid.lines[index]:Hide() end
 end
 local function Descendant(frame, parent)
     while frame do
@@ -32,22 +63,44 @@ local function EnsureOverlay()
     overlay:SetAllPoints(UIParent)
     overlay:SetFrameStrata("DIALOG")
     overlay:EnableMouse(false)
-    local function Guide(name)
+    local grid = CreateFrame("Frame", "SmallerUIMoveGrid", overlay)
+    grid:SetAllPoints()
+    grid:SetFrameStrata("LOW")
+    grid:EnableMouse(false)
+    grid.lines = {}
+    grid:Hide()
+    overlay.grid = grid
+    local function Guide(name, vertical)
         local line = CreateFrame("Frame", name, overlay)
         line:EnableMouse(false)
+        local shadow = line:CreateTexture(nil, "BACKGROUND")
+        shadow:SetAllPoints()
+        shadow:SetColorTexture(0.05, 0.06, 0.07, 0.60)
         line.texture = line:CreateTexture(nil, "OVERLAY")
-        line.texture:SetAllPoints()
-        line.texture:SetColorTexture(0.95, 0.78, 0.35, 0.7)
+        line.texture:SetPoint(vertical and "TOP" or "LEFT")
+        line.texture:SetPoint(vertical and "BOTTOM" or "RIGHT")
+        line.texture:SetColorTexture(1, 0.78, 0.40, 0.92)
         line:Hide()
         return line
     end
-    overlay.vertical = Guide("SmallerUIMoveVerticalGuide")
-    overlay.horizontal = Guide("SmallerUIMoveHorizontalGuide")
+    overlay.vertical = Guide("SmallerUIMoveVerticalGuide", true)
+    overlay.horizontal = Guide("SmallerUIMoveHorizontalGuide", false)
     selection = CreateFrame("Frame", "SmallerUIMoveSelection", overlay, "BackdropTemplate")
     selection:SetFrameLevel(100)
     selection:EnableMouse(false)
-    selection.label = selection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local UI = Addon.OptionsUI
+    selection.outline = CreateFrame("Frame", nil, selection, "BackdropTemplate")
+    selection.outline:EnableMouse(false)
+    local tag = CreateFrame("Frame", nil, selection, "BackdropTemplate")
+    tag:EnableMouse(false)
+    UI.Plate(tag, { 0.10, 0.14, 0.15, 1 })
+    tag:SetBackdropBorderColor(0.63, 0.50, 0.31, 1)
+    selection.tag = tag
+    selection.label = UI.Label(tag, "", 8, -5, "GameFontNormalSmall")
     selection.label:SetWordWrap(false)
+    selection.size = tag:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    selection.size:SetPoint("RIGHT", -8, 0)
+    selection.size:SetTextColor(0.80, 0.85, 0.86)
     selection:Hide()
 end
 local function HideGuides()
@@ -59,21 +112,47 @@ local function DrawSelection()
     if not bounds or not screen then selection:Hide(); return end
     local pixel = Pixel()
     if selection.pixel ~= pixel then
-        selection:SetBackdrop({ edgeFile = WHITE, edgeSize = pixel })
+        selection:SetBackdrop({ edgeFile = WHITE, edgeSize = 3 * pixel })
+        selection:SetBackdropBorderColor(0.035, 0.044, 0.047, 0.90)
+        local outline = selection.outline
+        outline:SetBackdrop({ edgeFile = WHITE, edgeSize = pixel })
+        outline:SetBackdropBorderColor(1, 0.80, 0.43, 1)
+        outline:ClearAllPoints()
+        outline:SetPoint("TOPLEFT", pixel, -pixel)
+        outline:SetPoint("BOTTOMRIGHT", -pixel, pixel)
         selection.pixel = pixel
     end
-    selection:SetBackdropBorderColor(1, 0.82, 0.3, 1)
     selection:SetSize(bounds.width + 6 * pixel, bounds.height + 6 * pixel)
     selection:ClearAllPoints()
     selection:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", bounds.x - screen.x - 3 * pixel, bounds.y - screen.y - 3 * pixel)
-    local labelWidth = math.max(1, math.min(240, screen.width - 8))
-    local labelLeft = math.max(screen.x + 4, math.min(screen.x + screen.width - labelWidth - 4, bounds.x))
-    selection.label:ClearAllPoints()
-    selection.label:SetWidth(labelWidth)
-    if bounds.y + bounds.height + 20 > screen.y + screen.height then
-        selection.label:SetPoint("TOPLEFT", selection, "TOPLEFT", labelLeft - bounds.x + 3 * pixel, -4)
-    else selection.label:SetPoint("BOTTOMLEFT", selection, "TOPLEFT", labelLeft - bounds.x + 3 * pixel, 4) end
-    selection.label:SetText(selectedName)
+    local width, height = math.floor(bounds.width / pixel + 0.5), math.floor(bounds.height / pixel + 0.5)
+    if selection.name ~= selectedName or selection.widthPx ~= width or selection.heightPx ~= height then
+        selection.name, selection.widthPx, selection.heightPx = selectedName, width, height
+        selection.label:SetText(selectedName)
+        selection.size:SetText(("%d × %d px"):format(width, height))
+        local nameWidth = selection.label.GetUnboundedStringWidth
+            and selection.label:GetUnboundedStringWidth() or #selectedName * 7
+        selection.sizeWidth = selection.size.GetUnboundedStringWidth
+            and selection.size:GetUnboundedStringWidth() or #selection.size:GetText() * 6
+        selection.tagWidth = math.ceil(nameWidth + selection.sizeWidth + 30)
+    end
+    local tagWidth = math.max(1, math.min(selection.tagWidth, screen.width - 8))
+    local x = math.max(4, math.min(screen.width - tagWidth - 4, bounds.x - screen.x))
+    local above, below = bounds.y + bounds.height - screen.y + 27, bounds.y - screen.y - 5
+    local view, kind = selected.view, selected.resourceKind
+    local sibling = view and kind and view[kind == "health" and "power" or "health"]
+    local nearby = sibling and sibling:IsVisible() and Rect(sibling)
+    if nearby and x + screen.x < nearby.x + nearby.width and x + screen.x + tagWidth > nearby.x then
+        local siblingBottom, siblingTop = nearby.y - screen.y, nearby.y + nearby.height - screen.y
+        if below > siblingBottom and below - 22 < siblingTop then below = siblingBottom - 5 end
+        if above > siblingBottom and above - 22 < siblingTop then above = below >= 26 and below or siblingTop + 27 end
+    end
+    local top = above <= screen.height - 4 and above or below
+    top = math.max(25, math.min(screen.height - 4, top))
+    selection.tag:SetSize(tagWidth, 22)
+    selection.label:SetWidth(math.max(1, tagWidth - selection.sizeWidth - 20))
+    selection.tag:ClearAllPoints()
+    selection.tag:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, top)
     selection:Show()
 end
 
@@ -103,6 +182,7 @@ function Addon:StartResourceMove(target, anchor, scope, name, kind, linked)
     drag = { target = target, anchor = anchor, scope = scope, kind = kind, linked = linked,
         bounds = bounds, anchorBounds = anchorBounds, cursorX = x, cursorY = y,
         sawHeld = IsMouseButtonDown("LeftButton") }
+    if toolbar then toolbar:RefreshSelection() end
     return true
 end
 
@@ -159,20 +239,26 @@ local function Snap(axis, delta, targets, screen)
     end
     return best, guide
 end
-local function DrawGuides(screen, x, y)
+local function DrawGuides(screen, x, y, shift)
     HideGuides()
     local pixel = Pixel()
     if x then
         overlay.vertical:ClearAllPoints()
-        overlay.vertical:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x - screen.x, 0)
-        overlay.vertical:SetSize(pixel, screen.height)
+        overlay.vertical:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x - screen.x - pixel, 0)
+        overlay.vertical:SetSize(3 * pixel, screen.height)
+        overlay.vertical.texture:SetWidth(pixel)
         overlay.vertical:Show()
     end
     if y then
         overlay.horizontal:ClearAllPoints()
-        overlay.horizontal:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, y - screen.y)
-        overlay.horizontal:SetSize(screen.width, pixel)
+        overlay.horizontal:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, y - screen.y - pixel)
+        overlay.horizontal:SetSize(screen.width, 3 * pixel)
+        overlay.horizontal.texture:SetHeight(pixel)
         overlay.horizontal:Show()
+    end
+    if toolbar then
+        local hint = shift and "Snapping paused" or (x or y) and "Snapped · Shift to release" or snapHint
+        if toolbar.hint:GetText() ~= hint then toolbar.hint:SetText(hint) end
     end
 end
 
@@ -209,7 +295,7 @@ function Addon:UpdateResourceMoveMode()
             drag.target:ClearAllPoints()
             drag.target:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (left - screen.x) / scale, (bottom - screen.y) / scale)
             drag.snapX, drag.snapY, drag.shift = guideX, guideY, shift
-            DrawGuides(screen, guideX, guideY)
+            DrawGuides(screen, guideX, guideY, shift)
         end
     end
     DrawSelection()
@@ -224,13 +310,23 @@ function Addon:FinishResourceMove()
     drag = nil
     previous.target:SetClampedToScreen(true)
     HideGuides()
+    if toolbar then
+        toolbar.hint:SetText(snapHint)
+        toolbar:RefreshSelection()
+    end
 end
 
 function Addon:CloseResourceMoveMode()
     if drag then drag.target:SetClampedToScreen(true) end
     drag, selected, selectedName = nil, nil, nil
     activeScope, activeKind = nil, nil
-    if overlay then HideGuides(); selection:Hide(); overlay:Hide() end
+    if overlay then
+        HideGuides()
+        overlay.grid:Hide()
+        selection:Hide()
+        overlay:Hide()
+    end
+    if toolbar then toolbar.gridToggle:SetText("Show grid") end
 end
 
 function Addon:GetResourceMoveState() return drag end
@@ -247,6 +343,12 @@ local targets = {
 local sealTarget = { "seal:seal", "Paladin seal", "seal", "seal" }
 local lootTarget = { "lootLauncher:lootLauncher", "Loot Ledger launcher", "lootLauncher", "lootLauncher" }
 
+local function FitToolbar(self)
+    local screen = Rect(UIParent)
+    if not screen then return end
+    self:SetScale(math.max(0.1, math.min(1, (screen.width - 24) / WIDTH, (screen.height - 48) / HEIGHT)))
+end
+
 function Addon:CreateResourceMoveToolbar()
     if toolbar then return toolbar end
     local UI = self.OptionsUI
@@ -255,17 +357,47 @@ function Addon:CreateResourceMoveToolbar()
     toolbar:SetIgnoreParentScale(true)
     toolbar:SetFrameStrata("DIALOG")
     toolbar:SetFrameLevel(110)
-    toolbar:SetSize(570, 115)
-    toolbar:SetPoint("TOP", 0, -40)
+    toolbar:SetSize(WIDTH, HEIGHT)
+    toolbar:SetPoint("TOP", 0, -22)
     toolbar:SetMovable(true)
     toolbar:SetClampedToScreen(true)
     toolbar:EnableMouse(true)
     toolbar:RegisterForDrag("LeftButton")
     toolbar:SetScript("OnDragStart", function(self) self:StartMoving() end)
     toolbar:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    UI.Backdrop(toolbar, { 0.048, 0.065, 0.085, 0.99 }, { 0.83, 0.66, 0.35, 1 })
-    UI.Label(toolbar, "Move Mode", 16, -12, "GameFontNormalLarge")
-    UI.Label(toolbar, "Drag to move  /  Shift to bypass snap", 162, -16, "GameFontHighlightSmall")
+    UI.Backdrop(toolbar, { 0.053, 0.073, 0.080, 1 }, { 0.58, 0.46, 0.29, 1 })
+    toolbar:RegisterEvent("UI_SCALE_CHANGED")
+    toolbar:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    toolbar:SetScript("OnEvent", function(self)
+        if self:IsShown() then FitToolbar(self) end
+        if overlay and overlay.grid:IsVisible() then DrawGrid(overlay.grid) end
+    end)
+    toolbar:SetScript("OnShow", FitToolbar)
+    local header = toolbar:CreateTexture(nil, "BACKGROUND")
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
+    header:SetHeight(35)
+    header:SetTexture(ENAMEL)
+    header:SetVertexColor(0.19, 0.25, 0.26)
+    local edge = toolbar:CreateTexture(nil, "BORDER")
+    edge:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT")
+    edge:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT")
+    edge:SetHeight(1)
+    edge:SetColorTexture(0.58, 0.45, 0.28, 0.8)
+    local emblem = toolbar:CreateTexture(nil, "ARTWORK")
+    emblem:SetPoint("TOPLEFT", 12, -10)
+    emblem:SetSize(16, 16)
+    emblem:SetTexture(JEWEL)
+    emblem:SetVertexColor(1, 0.86, 0.55)
+    local title = UI.Label(toolbar, "Move Mode", 35, -9, "GameFontNormalLarge")
+    title:SetTextColor(0.96, 0.81, 0.54)
+    toolbar.hint = toolbar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    toolbar.hint:SetPoint("TOPRIGHT", -14, -12)
+    toolbar.hint:SetText(snapHint)
+    toolbar.hint:SetTextColor(0.82, 0.85, 0.85)
+    UI.Label(toolbar, "Element", 14, -43, "GameFontNormalSmall")
+    UI.Label(toolbar, "Scale", 244, -43, "GameFontNormalSmall")
+    UI.Label(toolbar, "Movement", 344, -43, "GameFontNormalSmall")
     local choices, byKey = {}, {}
     for _, entry in ipairs(targets) do choices[#choices + 1] = entry; byKey[entry[1]] = entry end
     if self:IsPaladin() then choices[#choices + 1] = sealTarget; byKey[sealTarget[1]] = sealTarget end
@@ -281,7 +413,7 @@ function Addon:CreateResourceMoveToolbar()
         end
         return available
     end
-    local select = UI.Select(toolbar, "SmallerUIMoveTarget", 16, -42, 172, Choices, function()
+    local select = UI.Select(toolbar, "SmallerUIMoveTarget", 14, -60, 211, Choices, function()
         return activeScope and activeScope .. ":" .. activeKind
     end, function(key)
         local entry = byKey[key]
@@ -293,18 +425,21 @@ function Addon:CreateResourceMoveToolbar()
         resize(factor)
         DrawSelection()
     end
-    local smaller = UI.Button(toolbar, nil, "-", 200, -42, 32, function() Adjust(1 / 1.1) end)
-    UI.Tooltip(smaller, "Scale down")
-    local larger = UI.Button(toolbar, nil, "+", 238, -42, 32, function() Adjust(1.1) end)
-    UI.Tooltip(larger, "Scale up")
-    local link = UI.Switch(toolbar, nil, "Group", 286, -42, function(enabled)
+    local smaller = UI.Button(toolbar, "SmallerUIMoveScaleDown", "−", 244, -60, 37, function() Adjust(1 / 1.1) end)
+    UI.Tooltip(smaller, "Scale the selected element down")
+    local larger = UI.Button(toolbar, "SmallerUIMoveScaleUp", "+", 285, -60, 37, function() Adjust(1.1) end)
+    UI.Tooltip(larger, "Scale the selected element up")
+    local link = UI.Switch(toolbar, "SmallerUIMoveGroup", "", 342, -59, function(enabled)
         if not activeScope or drag then toolbar:RefreshSelection(); return end
         local _, _, setLinked = Addon:GetMoveElementControls(activeScope, activeKind)
         if setLinked then setLinked(enabled) end
         Addon:SelectMoveElement(activeScope, activeKind)
-    end, "Move and scale the bars together. For the seal, group it with personal health.")
-    link:SetWidth(100)
-    local reset = UI.Button(toolbar, nil, "Reset", 458, -42, 96, function()
+    end, "Move and scale related elements together. The seal groups with personal health.")
+    link:SetWidth(132)
+    toolbar.groupState = UI.Label(link, "", 46, -7, "GameFontHighlightSmall")
+    local single = UI.Label(toolbar, "Single element", 344, -67, "GameFontHighlightSmall")
+    single:SetTextColor(0.71, 0.76, 0.77)
+    local reset = UI.Button(toolbar, nil, "Reset", 471, -60, 83, function()
         if activeScope ~= "element" or drag then return end
         Addon:ResetElementMoveTarget()
         DrawSelection()
@@ -312,17 +447,38 @@ function Addon:CreateResourceMoveToolbar()
     UI.Tooltip(reset, "Restore the selected Blizzard frame's position and family scale.")
     function toolbar:RefreshSelection()
         reset:SetShown(activeScope == "element")
+        reset:SetEnabled(not drag)
+        smaller:SetEnabled(not drag)
+        larger:SetEnabled(not drag)
         select:GenerateMenu()
         local linked = Addon:GetMoveElementControls(activeScope, activeKind)
         link:SetShown(linked ~= nil)
         link:SetChecked(linked)
+        link:SetEnabled(not drag)
+        single:SetShown(linked == nil)
+        self.groupState:SetText(linked and (activeScope == "seal" and "Linked to health" or "Grouped") or "Separate")
+        self.groupState:SetTextColor(linked and 0.96 or 0.82, linked and 0.81 or 0.85, linked and 0.54 or 0.85)
     end
-    UI.Button(toolbar, "SmallerUIResourceDemo", "Preview damage / heal", 16, -77, 172,
+    UI.Button(toolbar, "SmallerUIResourceDemo", "Preview damage / heal", 14, -98, 169,
         function() Addon:TestResourceDamage() end)
-    UI.Button(toolbar, "SmallerUIResourceCancel", "Cancel", 312, -77, 84,
+    toolbar.gridToggle = UI.Button(toolbar, "SmallerUIMoveGridToggle", "Show grid", 192, -98, 108, function(button)
+        EnsureOverlay()
+        local grid = overlay.grid
+        local show = not grid:IsShown()
+        if show then
+            overlay:Show()
+            DrawGrid(grid)
+        end
+        grid:SetShown(show)
+        button:SetText(show and "Hide grid" or "Show grid")
+    end)
+    UI.Tooltip(toolbar.gridToggle, "Show a screen-centred alignment grid")
+    UI.Button(toolbar, "SmallerUIResourceCancel", "Cancel", 310, -98, 89,
         function() Addon:FinishResourceEdit(false) end)
-    UI.Button(toolbar, "SmallerUIResourceDone", "Done & Settings", 408, -77, 146,
+    local done = UI.Button(toolbar, "SmallerUIResourceDone", "Done & Settings", 407, -98, 147,
         function() Addon:FinishResourceEdit(true) end)
+    done:SetBackdropColor(0.26, 0.21, 0.14, 1)
+    done:SetBackdropBorderColor(0.83, 0.66, 0.38, 1)
     toolbar:SetScript("OnHide", function(self)
         self:StopMovingOrSizing()
         if Addon:IsEditingResources() then Addon:FinishResourceEdit(false) end
