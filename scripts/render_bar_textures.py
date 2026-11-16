@@ -59,6 +59,17 @@ def jewel(x, y):
     return facet, coverage
 
 
+def medallion(x, y):
+    dx, dy = x - 0.5, y - 0.5
+    radius = hypot(dx, dy)
+    coverage = (0.49 - radius) * 64
+    light = (dx - dy) * 0.27
+    if radius >= 0.41:
+        ridge = exp(-((radius - 0.449) / 0.016) ** 2)
+        return 0.44 + 0.46 * ridge + light, coverage
+    return 0.16, (radius - 0.384) * 64
+
+
 def arc(x, y, outline=False):
     # Round-ended stroke. The left curve bows out by 25 units at its midpoint.
     end = min(0.974, max(0.026, y))
@@ -76,3 +87,4 @@ if __name__ == "__main__":
     write_texture("TrimJewel", 16, 16, jewel)
     write_texture("ArcFill", 128, 512, arc)
     write_texture("ArcOutline", 128, 512, lambda x, y: arc(x, y, outline=True))
+    write_texture("PortraitRim", 64, 64, medallion)

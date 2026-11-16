@@ -25,7 +25,7 @@ Open **Forever QoL** with `/fqol` or the minimap gear. Use **Interface** for glo
 
 Open **Loot Ledger** with `/fqol loot` or Shift-left-click the minimap gear. Search or filter loot and rolls, and select an entry to inspect its details. Enable **Show Loot Ledger launcher** under **Loot & Rolls** to add a button you can reposition in **Move Mode**.
 
-Right-click the minimap gear to open chat search. Shift-right-click it to show or hide the whisper bar.
+Open whispers and Party messages from the three-line chat menu on the left. Right-click the minimap gear to search chats, or Shift-right-click it to show or hide the chat menu.
 
 Open **Move Mode** from the sidebar or run `/fqol move`. Select an element or click a preview, drag to position it, and use **- / +** to resize. **Group** links related bars or Blizzard frames. Hold **Shift** to bypass snapping. **Done & Settings** saves and returns to your settings tab. **Cancel** or **Escape** restores the previous layout.
 

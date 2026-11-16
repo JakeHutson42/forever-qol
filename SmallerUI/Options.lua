@@ -5,6 +5,9 @@ Addon.OptionsUI = UI
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local HEADER_ART = "Interface\\AddOns\\SmallerUI\\Media\\SettingsHeader.tga"
 local ENAMEL = "Interface\\AddOns\\SmallerUI\\Media\\Foundry.tga"
+local BRONZE = "Interface\\Tooltips\\UI-Tooltip-Border"
+local ROCK = "Interface\\FrameGeneral\\UI-Background-Rock"
+local BUTTON_ATLAS = "common-dropdown-c-button"
 local WINDOW_WIDTH, MIN_HEIGHT, MAX_HEIGHT = 878, 520, 690
 local gold = { 0.94, 0.78, 0.50, 1 }
 local ink = { 0.95, 0.93, 0.88, 1 }
@@ -104,19 +107,96 @@ function UI.Plate(frame, color)
     frame:SetBackdropBorderColor(unpack(muted))
 end
 
-function UI.Button(parent, name, text, x, y, width, callback)
+local function Bronze(frame, fill, edge)
+    frame:SetBackdrop({ bgFile = WHITE, edgeFile = BRONZE, edgeSize = edge,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    frame:SetBackdropColor(unpack(fill))
+    frame:SetBackdropBorderColor(0.70, 0.52, 0.30, 1)
+end
+
+function UI.WindowSurface(frame)
+    Bronze(frame, { 0.105, 0.075, 0.046, 1 }, 14)
+    local stone = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
+    stone:SetPoint("TOPLEFT", 4, -4)
+    stone:SetPoint("BOTTOMRIGHT", -4, 4)
+    stone:SetTexture(ROCK, "REPEAT", "REPEAT")
+    if stone.SetHorizTile then stone:SetHorizTile(true); stone:SetVertTile(true) end
+    stone:SetDesaturated(true)
+    stone:SetVertexColor(0.37, 0.28, 0.18)
+    local wash = frame:CreateTexture(nil, "BACKGROUND", nil, 2)
+    wash:SetAllPoints(stone)
+    wash:SetColorTexture(0.041, 0.029, 0.019, 0.38)
+end
+
+function UI.EditBox(parent, name, font)
+    local input = CreateFrame("EditBox", name, parent, "BackdropTemplate")
+    Bronze(input, { 0.075, 0.054, 0.030, 1 }, 8)
+    input:SetFontObject(font or GameFontHighlight)
+    input:SetTextInsets(7, 7, 0, 0)
+    input:HookScript("OnEditFocusGained", function(self) self:SetBackdropBorderColor(1, 0.77, 0.38, 1) end)
+    input:HookScript("OnEditFocusLost", function(self) self:SetBackdropBorderColor(0.70, 0.52, 0.30, 1) end)
+    return input
+end
+
+function UI.FitScale(frame, width, height)
+    local root = UIParent:GetEffectiveScale()
+    local availableWidth, availableHeight = UIParent:GetSize()
+    local scale = math.min(root, math.max(0.1,
+        math.min((availableWidth * root - 24) / width, (availableHeight * root - 24) / height)))
+    frame:SetScale(scale)
+    return scale
+end
+
+function UI.ScrollFrame(parent, name)
+    local scroll = CreateFrame("ScrollFrame", name, parent)
+    local track = CreateFrame("EventFrame", nil, parent, "MinimalScrollBar")
+    track:SetFrameLevel(scroll:GetFrameLevel() + 2)
+    track:SetScale(0.75)
+    track:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 5, 0)
+    track:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 5, 0)
+    track:Hide()
+    local updating
+    local function Update()
+        local range, height = scroll:GetVerticalScrollRange() or 0, scroll:GetHeight() or 0
+        local show = scroll:IsShown() and range > 0.5 and height > 0 and track.RegisterCallback ~= nil
+        track:SetShown(show)
+        if not show then return end
+        updating = true
+        local visible = height / (range + height)
+        track:SetVisibleExtentPercentage(visible)
+        track:SetPanExtentPercentage(visible * 0.24)
+        track:SetScrollPercentage(math.min(1, (scroll:GetVerticalScroll() or 0) / range), true)
+        updating = false
+    end
+    if track.RegisterCallback then
+        track:RegisterCallback("OnScroll", function(_, percent)
+            if not updating then scroll:SetVerticalScroll(percent * scroll:GetVerticalScrollRange()) end
+        end, track)
+    end
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local range = self:GetVerticalScrollRange() or 0
+        self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
+    end)
+    for _, event in ipairs({ "OnShow", "OnHide", "OnSizeChanged", "OnScrollRangeChanged", "OnVerticalScroll" }) do
+        scroll:HookScript(event, Update)
+    end
+    return scroll
+end
+
+function UI.Button(parent, name, text, x, y, width, callback, row)
     local button = CreateFrame("Button", name, parent, "BackdropTemplate")
     button:SetPoint("TOPLEFT", x, y)
     button:SetSize(width, 26)
-    UI.Plate(button, buttonFill)
+    UI.Plate(button, row and { 0.091, 0.068, 0.042, 0.45 } or buttonFill)
     local textLabel = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     textLabel:SetPoint("CENTER")
     button.label = textLabel
     button:SetFontString(textLabel)
     button:SetText(text)
-    textLabel:SetTextColor(unpack(ink))
+    textLabel:SetTextColor(unpack(row and ink or gold))
     button:SetHighlightTexture(WHITE, "ADD")
-    button:GetHighlightTexture():SetVertexColor(0.33, 0.46, 0.55, 0.24)
+    button:GetHighlightTexture():SetVertexColor(0.55, 0.38, 0.16, 0.23)
     button:SetPushedTexture(WHITE)
     local pressed = button:GetPushedTexture()
     pressed:SetBlendMode("ADD")
@@ -124,11 +204,40 @@ function UI.Button(parent, name, text, x, y, width, callback)
     button:SetScript("OnEnable", function(self) self:SetAlpha(1) end)
     button:SetScript("OnDisable", function(self) self:SetAlpha(0.45) end)
     button:SetScript("OnClick", callback)
+    if not row and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(BUTTON_ATLAS) then
+        local face = button:CreateTexture(nil, "BACKGROUND", nil, 2)
+        face:SetPoint("TOPLEFT", -4, 4)
+        face:SetPoint("BOTTOMRIGHT", 4, -4)
+        face:SetAtlas(BUTTON_ATLAS)
+        button.face = face
+        button:GetHighlightTexture():SetAlpha(0)
+        pressed:SetAlpha(0)
+        button:SetBackdropColor(0, 0, 0, 0)
+        button:SetBackdropBorderColor(0, 0, 0, 0)
+        local function Paint(self)
+            local suffix = not self:IsEnabled() and "-disabled" or self.faceDown and "-pressed-1"
+                or self.faceOver and "-hover-1" or self.faceSelected and "-open" or ""
+            face:SetShown(not self.marker or self.faceSelected or self.faceOver or self.faceDown)
+            face:SetAtlas(BUTTON_ATLAS .. suffix)
+        end
+        button.paintFace = Paint
+        button:HookScript("OnEnter", function(self) self.faceOver = true; Paint(self) end)
+        button:HookScript("OnLeave", function(self) self.faceOver = nil; Paint(self) end)
+        button:HookScript("OnMouseDown", function(self) self.faceDown = true; Paint(self) end)
+        button:HookScript("OnMouseUp", function(self) self.faceDown = nil; Paint(self) end)
+        button:HookScript("OnHide", function(self) self.faceDown, self.faceOver = nil, nil end)
+        button:HookScript("OnShow", Paint)
+        button:HookScript("OnEnable", Paint)
+        button:HookScript("OnDisable", Paint)
+    end
     return button
 end
 
 local function SelectButton(button, selected)
-    if button.marker and not selected then
+    if button.face then
+        button.faceSelected = selected
+        button.paintFace(button)
+    elseif button.marker and not selected then
         button:SetBackdropColor(0.07, 0.105, 0.14, 0)
         button:SetBackdropBorderColor(0, 0, 0, 0)
     else
@@ -421,7 +530,54 @@ local function FitWindow()
     window:SetHeight(math.max(MIN_HEIGHT, math.min(MAX_HEIGHT, math.floor(availableHeight / scale + 0.001))))
 end
 
-function UI.Header(frame, title, icon, onClose, artwork)
+local function CompactHeader(frame, title, icon, onClose, artwork, height)
+    local header = CreateFrame("Frame", nil, frame)
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
+    header:SetHeight(height)
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", function() frame:StartMoving() end)
+    header:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
+    if artwork then
+        local art = header:CreateTexture(nil, "BACKGROUND")
+        art:SetAllPoints()
+        art:SetTexture(artwork)
+    end
+    local rule = header:CreateTexture(nil, "ARTWORK")
+    rule:SetPoint("BOTTOMLEFT", 12, 1)
+    rule:SetPoint("BOTTOMRIGHT", -12, 1)
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.68, 0.52, 0.31, 0.58)
+    local rim = header:CreateTexture(nil, "ARTWORK")
+    local diameter = height >= 65 and 44 or 33
+    rim:SetSize(diameter, diameter)
+    rim:SetPoint("LEFT", 16, 0)
+    rim:SetTexture("Interface\\AddOns\\SmallerUI\\Media\\PortraitRim.tga")
+    rim:SetVertexColor(1, 0.81, 0.51)
+    local emblem = header:CreateTexture(nil, "OVERLAY")
+    emblem:SetSize(diameter - 8, diameter - 8)
+    emblem:SetPoint("CENTER", rim, "CENTER")
+    emblem:SetTexture("Interface\\Icons\\" .. icon)
+    emblem:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    local mask = header:CreateMaskTexture()
+    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    mask:SetAllPoints(emblem)
+    emblem:AddMaskTexture(mask)
+    local heading = header:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    heading:SetPoint("LEFT", rim, "RIGHT", 10, 0)
+    heading:SetText(title)
+    heading:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", height >= 65 and 22 or 17, "")
+    heading:SetTextColor(unpack(gold))
+    local close = CreateFrame("Button", nil, header, "UIPanelCloseButton")
+    close:SetPoint("RIGHT", -10, 0)
+    close:SetScript("OnClick", onClose)
+    UI.Tooltip(close, "Close " .. title)
+    return header
+end
+
+function UI.Header(frame, title, icon, onClose, artwork, height)
+    if height then return CompactHeader(frame, title, icon, onClose, artwork, height) end
     local header = CreateFrame("Frame", nil, frame)
     header:SetPoint("TOPLEFT", 1, -1)
     header:SetPoint("TOPRIGHT", -1, -1)

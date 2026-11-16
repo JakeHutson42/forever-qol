@@ -232,6 +232,7 @@ local function boot(saved, characterSaved, compatibility)
             self:SetMouseMotionEnabled(value)
         end
         function widget:SetTexture(value) self.textureValue = value end
+        function widget:SetAtlas(value) self.atlas = value end
         function widget:SetDesaturated(value) self.desaturated = value end
         function widget:SetClipsChildren(value) self.clipsChildren = value end
         function widget:SetReverseFill(value) self.reverseFill = value end
@@ -642,6 +643,7 @@ do
     compactTick(0.12)
     check(toggle.thumbOffset == 20 and not toggle.scripts.OnUpdate, "Switch feedback finishes without a running animation")
     compact.Click(settings.entries.whispers)
+    compactEnv.SmallerUIWhisperOptions:SelectTab("messages")
     compact.Click(compactEnv.SmallerUIWhisperPopups)
     check(compactEnv.SmallerUIPartyAlertOptions:IsVisible() and not settings:IsShown(),
         "Whisper Manager links to the chat pop-up settings")
@@ -2601,33 +2603,86 @@ do
     local addon = state.addon
     env.GetNormalizedRealmName = function() return "Forever" end
     addon:ShowOptions("whispers")
-    check(env.SmallerUIWhisperOptions:IsVisible() and not env.SmallerUIWhisperBar,
-        "Whisper Manager has a settings page and creates the bar on demand")
+    check(env.SmallerUIWhisperOptions:IsVisible() and not env.SmallerUIWhisperBar
+        and addon:GetWhisperSettings().position == "left" and not env.SmallerUIWhisper_direction,
+        "Whisper Manager defaults to a left-side menu and creates the launcher on demand")
+    local preview = env.SmallerUIWhisperOptions.preview
+    local width = preview.conversation:GetWidth()
+    addon:SetWhisperOption("width", 600)
+    addon:SetWhisperOption("timestamps", true)
+    check(preview.conversation:GetWidth() > width and preview.messages[1].stamp:IsShown() and not env.SmallerUIWhisperChat,
+        "The sample reflects size and timestamps independently of live chat")
     event("CHAT_MSG_WHISPER", "Hello", "Vale-Forever")
     event("CHAT_MSG_WHISPER_INFORM", "Hi", "Vale")
     event("CHAT_MSG_WHISPER", "Ready?", "Vale-Forever")
     local bar = env.SmallerUIWhisperBar
+    check(bar:IsVisible() and not bar.menu:IsShown() and not env.SmallerUIWhisperChat
+        and bar.launcher.badge.count:GetText() == "2",
+        "Incoming whispers update the collapsed launcher without opening chat")
+    state.Click(bar.launcher)
     local slot, count = nil, 0
     for _, widget in ipairs(state.widgets) do
-        if widget.parent == bar and widget.thread then slot, count = widget, count + 1 end
+        if widget.parent == bar.menu and widget.thread and widget:IsVisible() then slot, count = widget, count + 1 end
     end
     check(count == 1 and slot.badge:IsShown() and slot.badge.count:GetText() == "2",
         "Whisper directions share a contact and only incoming messages increment unread")
     state.Click(slot)
     local chat = env.SmallerUIWhisperChat
-    check(chat:IsShown() and chat.rows[2].label:GetText() == "Hi" and not slot.badge:IsShown(),
-        "Opening a conversation displays both directions and clears its badge")
+    check(chat:IsShown() and chat.rows[2].label:GetText() == "Hi" and not bar.menu:IsShown()
+        and not bar.launcher.badge:IsShown(),
+        "Opening a conversation displays both directions, closes the menu, and clears unread")
+    check(chat:GetEffectiveScale() == env.UIParent:GetEffectiveScale()
+        and bar:GetEffectiveScale() == env.UIParent:GetEffectiveScale(),
+        "The conversation and launcher use the active UI scale")
     event("CHAT_MSG_WHISPER", "Let's go", "Vale")
-    check(chat.rows[4].label:GetText() == "Let's go" and not slot.badge:IsShown(),
+    check(chat.rows[4].label:GetText() == "Let's go" and not bar.launcher.badge:IsShown(),
         "Incoming whispers append to an open conversation")
     state.Select(env.SmallerUIWhisper_position, "right")
-    check(bar._points[1][3] == "TOPRIGHT" and bar:GetHeight() > bar:GetWidth(),
-        "Right docking reorients the bar vertically")
-    bar.grip.scripts.OnDragStart()
-    bar.grip.scripts.OnDragStop()
+    check(addon:GetWhisperSettings().position == "right" and bar:GetHeight() == bar:GetWidth()
+        and bar:GetWidth() <= 40, "Right docking keeps a compact square launcher")
+    bar.launcher.scripts.OnDragStart(bar.launcher)
+    bar.launcher.scripts.OnDragStop(bar.launcher)
     check(addon:GetWhisperSettings().position == "free", "Dragging saves free placement")
     state.Click(env.SmallerUIWhisper_enabled)
-    check(not bar:IsShown() and not chat:IsShown(), "Disabling Whisper Manager hides the bar and conversation")
+    check(not bar:IsShown() and not chat:IsShown(), "Disabling Whisper Manager hides the launcher and conversation")
+end
+
+do
+    local env, state, event = boot({ whispers = { position = "top", partyAutoOpen = true, width = 420 } })
+    local addon = state.addon
+    local settings = addon:GetWhisperSettings()
+    check(settings.position == "left" and not settings.partyAutoOpen and settings.width == 420,
+        "Legacy default placement and Party auto-open migrate to the compact menu")
+    state.geometry = true
+    env.UIParent:SetScale(1)
+    env.UIParent:SetSize(740, 450)
+    env.ChatFrame1 = env.CreateFrame("Frame", nil, env.UIParent)
+    env.ChatFrame1:SetSize(300, 110)
+    env.ChatFrame1:SetPoint("BOTTOMLEFT", 25, 25)
+    event("DISPLAY_SIZE_CHANGED")
+    for index = 1, 50 do event("CHAT_MSG_WHISPER", "Hello", "Guest" .. index) end
+    local bar = env.SmallerUIWhisperBar
+    state.Click(bar.launcher)
+    local function VisibleRows()
+        local rows = {}
+        for _, widget in ipairs(state.widgets) do
+            if widget.parent == bar.menu and widget.thread and widget:IsVisible() then rows[#rows + 1] = widget end
+        end
+        return rows
+    end
+    local rows = VisibleRows()
+    local x, y, width, height = bar.menu:GetRect()
+    check(bar.menu:IsVisible() and #rows > 1 and #rows < 50
+        and x >= 0 and x + width <= 740 and y >= 0 and y + height <= 450,
+        "The expanded menu fits a compact viewport while retaining access to more conversations")
+    local launchX = bar:GetRect()
+    local firstX, firstY = rows[1]:GetRect()
+    local secondX, secondY = rows[2]:GetRect()
+    check(launchX < 40 and firstX == secondX and firstY > secondY,
+        "The default launcher sits at the left edge and stacks conversation portraits")
+    local newest = rows[1].thread
+    bar.menu.scripts.OnMouseWheel(bar.menu, -1)
+    check(VisibleRows()[1].thread ~= newest, "Scrolling the menu reveals older contacts")
 end
 
 do
@@ -2652,9 +2707,11 @@ do
     event("CHAT_MSG_SYSTEM", env.ERR_TRADE_COMPLETE)
     check(#entries == 1 and entries[1].status == "complete" and entries[1].sent.items[1].count == 2
         and entries[1].received.money == 10203, "Trade confirmation records both sides once after close")
+    local bar = env.SmallerUIWhisperBar
+    state.Click(bar.launcher)
     local slot
     for _, widget in ipairs(state.widgets) do
-        if widget.thread and widget.thread.key == key then slot = widget end
+        if widget.thread and widget.thread.key == key and widget:IsVisible() then slot = widget end
     end
     state.Click(slot)
     local chat = env.SmallerUIWhisperChat
@@ -2669,14 +2726,21 @@ do
 
     env.UnitName = function(unit) if unit == "player" then return "Myself" end end
     event("CHAT_MSG_PARTY", "Ready?", "Vale")
+    check(not chat:IsShown() and not bar.menu:IsShown() and bar.launcher.badge:IsVisible(),
+        "Incoming Party chat updates unread without opening a window by default")
+    state.Click(bar.launcher)
+    for _, widget in ipairs(state.widgets) do
+        if widget.thread and widget.thread.party and widget:IsVisible() then slot = widget; break end
+    end
+    state.Click(slot)
     check(chat:IsShown() and chat.title:GetText() == "Party" and chat.rows[1].label:GetText():find("Vale", 1, true),
-        "Incoming party chat automatically opens its own conversation")
+        "Party chat opens from the menu and identifies the author")
     event("CHAT_MSG_PARTY_LEADER", "Ready", "Myself")
     check(chat.rows[2].label:GetText():find("You", 1, true), "Outgoing party messages identify the player")
     chat:Hide()
-    addon:SetWhisperOption("partyAutoOpen", false)
+    addon:SetWhisperOption("partyAutoOpen", true)
     event("CHAT_MSG_PARTY", "Going", "Vale")
-    check(not chat:IsShown(), "Party auto-open can be turned off")
+    check(chat:IsShown() and chat.title:GetText() == "Party", "Party auto-open can be enabled explicitly")
     event("GROUP_LEFT")
     check(not env.SmallerUIWhisperBar:IsShown(), "Leaving a group clears its Party conversation")
 end
@@ -2686,7 +2750,7 @@ do
     local addon = state.addon
     local function OnlySlot(findState)
         for _, widget in ipairs(findState.widgets) do
-            if widget.thread and not widget.thread.party then return widget end
+            if widget.thread and not widget.thread.party and widget:IsVisible() then return widget end
         end
     end
     event("CHAT_MSG_WHISPER", "Before saving", "Vale")
@@ -2697,8 +2761,10 @@ do
     for index = 1, 65 do event("CHAT_MSG_WHISPER", "Message " .. index, "Vale") end
     event("CHAT_MSG_PARTY", "Party history", "Vale")
     local reloaded, reloadedState = boot(env.SmallerUIDB, env.SmallerUICharDB)
+    reloadedState.Click(reloaded.SmallerUIWhisperBar.launcher)
     local slot = OnlySlot(reloadedState)
-    check(slot and slot.thread.unread == 66 and #slot.thread.messages == 67, "Login restores chat and unread counts")
+    local thread = slot and slot.thread
+    check(thread and thread.unread == 66 and #thread.messages == 67, "Login restores chat and unread counts")
     reloadedState.Click(slot)
     local chat = reloaded.SmallerUIWhisperChat
     check(#chat.rows == 60 and chat.older:IsShown(), "Only one page of message frames is allocated")
@@ -2708,7 +2774,7 @@ do
     chat.search:SetText("[rUneCloth]")
     check(chat.rows[1].label:GetText() == "Look for [Runecloth]" and not chat.rows[2]:IsShown(),
         "Case-insensitive literal search includes messages outside the current page")
-    check(chat.rows[1].stamp:GetText() == os.date("%d/%m/%Y %H:%M", slot.thread.messages[2][2]),
+    check(chat.rows[1].stamp:GetText() == os.date("%d/%m/%Y %H:%M", thread.messages[2][2]),
         "Search results display the stored timestamp in UK format")
     chat.search:SetText("No such message")
     check(chat.empty:GetText() == "No matching messages" and not chat.rows[1]:IsShown(), "Empty search results are explicit")
@@ -2760,7 +2826,7 @@ do
     state.Click(env.SmallerUIMinimapButton)
     check(lootPage:IsVisible(), "Shift-left-click opens the loot ledger")
     state.Click(env.SmallerUIMinimapButton, "RightButton")
-    check(not addon:GetWhisperSettings().showBar, "Shift-right-click toggles whisper bar visibility")
+    check(not addon:GetWhisperSettings().showBar, "Shift-right-click toggles chat menu visibility")
     state.shift = false
     lootPage:Hide()
     addon:ShowOptions("loot")
@@ -3162,6 +3228,87 @@ do
     event("BAG_UPDATE_DELAYED")
     check(not flips:SellableStacks()["unrelated-mail"],
         "An unrelated identical stack cannot be flagged while the actual flip invoice is still in the inbox")
+end
+
+do
+    local env, state, event = boot(nil)
+    local addon = state.addon
+    local realID = { accountName = "|Kq37|k", battleTag = "Mossback#1234", bnetAccountID = 32,
+        gameAccountInfo = { clientProgram = "WoW", classID = 8, isOnline = true } }
+    local function InstallRoster(target)
+        target.BNGetNumFriends = function() return 1 end
+        target.C_BattleNet = { GetFriendAccountInfo = function(index) return index == 1 and realID or nil end }
+        target.C_CreatureInfo = { GetClassInfo = function(classID) return classID == 8 and { classFile = "MAGE" } or nil end }
+        target.CLASS_ICON_TCOORDS = { MAGE = { 0.25, 0.5, 0, 0.25 } }
+    end
+    local function Whisper(dispatch, direction, message, sender, id)
+        dispatch("CHAT_MSG_BN_WHISPER" .. direction, message, sender, "", "", "", "", 0, 0, "", 0, 1, "", id)
+    end
+    InstallRoster(env)
+    addon:SetWhisperOption("saveHistory", true)
+    Whisper(event, "", "Hello from Battle.net", realID.accountName, 32)
+    Whisper(event, "_INFORM", "Hello back", realID.accountName, 0)
+    local available = addon:GetChatSearchThreads()
+    local thread = available[1]
+    check(#available == 1 and #thread.messages == 2 and not thread.messages[1][3] and thread.messages[2][3],
+        "Battle.net directions resolve to one conversation even without an account ID on one event")
+    check(addon:OpenChatSearchResult(thread, thread.messages[1]), "A Battle.net conversation opens through chat search")
+    local chat = env.SmallerUIWhisperChat
+    local avatar = chat.identity.avatar
+    check(chat.title:GetText() == realID.accountName and avatar.textureValue:find("CharacterCreate%-Classes")
+        and avatar.texCoords[1] == 0.25, "Real ID passes the native name token and shows a remote WoW class portrait")
+    realID.gameAccountInfo.playerGuid = "Player-1-00000020"
+    env.UnitTokenFromGUID = function(guid) return guid == realID.gameAccountInfo.playerGuid and "party1" or nil end
+    env.SetPortraitTexture = function(texture, unit) texture:SetTexture("portrait:" .. unit) end
+    event("BN_FRIEND_INFO_CHANGED", 1)
+    check(avatar.textureValue == "portrait:party1", "A Real ID friend in the party uses the live character portrait")
+    realID.gameAccountInfo = { clientProgram = "App", isOnline = true }
+    env.Enum = { TitleIconVersion = { Medium = 1 } }
+    env.C_Texture = {
+        SetTitleIconTexture = function(texture, title) texture:SetTexture("title:" .. title) end,
+        ClearTitleIconTexture = function(texture) texture:SetTexture(nil) end,
+    }
+    event("BN_FRIEND_INFO_CHANGED", 1)
+    check(avatar.textureValue == "title:App", "A Battle.net contact in another client uses its native title icon")
+    local replyTarget
+    env.ChatFrameUtil = { SendBNetTell = function(name) replyTarget = name end }
+    for _, widget in ipairs(state.objects) do
+        if widget:GetParent() == chat and widget:GetText() == "Reply" then state.Click(widget) end
+    end
+    check(replyTarget == realID.accountName, "Reply passes the Real ID token to Blizzard chat")
+    local saved = env.SmallerUICharDB.chatHistory.threads
+    local entry = saved["bnet:mossback#1234"]
+    check(entry.name == "Mossback" and entry.battleTag == realID.battleTag and not entry.account,
+        "History stores the stable BattleTag and a readable label")
+    saved["bnet:19"] = { bnet = true, name = "|Kq19|k", account = 19, messages = { { "An older message", 95, false } } }
+
+    local restored, restoredState, restoredEvent = boot(env.SmallerUIDB, env.SmallerUICharDB)
+    realID.accountName, realID.bnetAccountID = "|Kq71|k", 54
+    local restoredAddon = restoredState.addon
+    Whisper(restoredEvent, "", "Hello before the roster loads", realID.accountName, 54)
+    local previous, pending
+    for _, candidate in ipairs(restoredAddon:GetChatSearchThreads()) do
+        if candidate.battleTag then previous = candidate elseif candidate.account == 54 then pending = candidate end
+    end
+    local pendingArchiveKey = pending.archiveKey
+    check(restoredAddon:OpenChatSearchResult(pending, pending.messages[1]), "An unresolved Real ID whisper opens before roster data loads")
+    InstallRoster(restored)
+    restoredEvent("BN_FRIEND_INFO_CHANGED", 1)
+    check(pending.battleTag == realID.battleTag and #pending.messages == 3,
+        "A roster update links pending and restored Battle.net messages before the next whisper arrives")
+    Whisper(restoredEvent, "", "Hello after login", realID.accountName, 54)
+    local found, legacy
+    for _, candidate in ipairs(restoredAddon:GetChatSearchThreads()) do
+        if candidate.battleTag then found = candidate else legacy = candidate end
+    end
+    check(found == pending and #found.messages == 4 and restoredAddon:GetWhisperDisplayName(found) == realID.accountName
+        and restored.SmallerUIWhisperChat:IsShown() and not saved[pendingArchiveKey]
+        and saved["bnet:mossback#1234"].messages == found.messages,
+        "A restored Battle.net conversation merges pending messages after the roster loads without closing the window")
+    check(restoredAddon:OpenChatSearchResult(previous, previous.messages[1]), "Search results from before the merge still open")
+    check(legacy and legacy.messages[1][1] == "An older message" and not legacy.account
+        and restoredAddon:GetWhisperDisplayName(legacy) == "Battle.net contact" and not saved["bnet:19"],
+        "Legacy private history keeps its message without reusing a previous session's identity")
 end
 
 print(string.format("Passed %d checks (%s).", passed, _VERSION))
