@@ -397,7 +397,7 @@ end
 
 for _, event in ipairs({ "PLAYER_LOGIN", "MAIL_SHOW", "MAIL_CLOSED", "MAIL_INBOX_UPDATE", "MAIL_SUCCESS", "MAIL_FAILED",
     "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE",
-    "BAG_UPDATE_DELAYED", "MERCHANT_SHOW", "MERCHANT_CLOSED", "MERCHANT_UPDATE", "GET_ITEM_INFO_RECEIVED", "CURSOR_UPDATE" }) do
+    "BAG_UPDATE_DELAYED", "MERCHANT_SHOW", "MERCHANT_CLOSED", "MERCHANT_UPDATE", "GET_ITEM_INFO_RECEIVED", "CURSOR_CHANGED" }) do
     frame:RegisterEvent(event)
 end
 
@@ -435,7 +435,7 @@ frame:SetScript("OnEvent", function(_, event, itemID)
         CheckTakes()
         if next(Ledger().stacks) then Flips:SellableStacks() end
         if Flips.merchantOpen then Notify() end
-    elseif Flips.merchantOpen and (event == "MERCHANT_UPDATE" or event == "GET_ITEM_INFO_RECEIVED" or event == "CURSOR_UPDATE") then
+    elseif Flips.merchantOpen and (event == "MERCHANT_UPDATE" or event == "GET_ITEM_INFO_RECEIVED" or event == "CURSOR_CHANGED") then
         Notify()
     end
 end)

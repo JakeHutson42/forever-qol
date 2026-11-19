@@ -1,6 +1,6 @@
 local _, Addon = ...
 local Resale, Market = Addon.VendorResale, Addon.VendorResaleMarket
-local panel, button
+local panel, button, merchantTabRoot
 local WIDTH, HEIGHT, PAGE_SIZE = 526, 494, 5
 
 local function MerchantTabState()
@@ -331,7 +331,13 @@ function Addon:RefreshVendorResale()
     end
     local offers, emptyMessage = Resale:Offers()
     if not button then
-        button = CreateFrame("Button", "SmallerUIResaleDealsButton", MerchantFrame, "PanelTabButtonTemplate")
+        -- PanelTabButtonTemplate inserts itself into its parent's Tabs array.
+        -- Isolate this auxiliary tab from the merchant's native tab selection.
+        merchantTabRoot = CreateFrame("Frame", nil, MerchantFrame)
+        merchantTabRoot:SetSize(1, 1)
+        merchantTabRoot:SetPoint("TOPLEFT")
+        merchantTabRoot:SetFrameLevel(MerchantFrame:GetFrameLevel() + 10)
+        button = CreateFrame("Button", "SmallerUIResaleDealsButton", merchantTabRoot, "PanelTabButtonTemplate")
         button:SetScript("OnClick", function()
             if panel and panel:IsShown() then Close(); return end
             if not panel then MakePanel() end

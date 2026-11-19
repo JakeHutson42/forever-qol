@@ -35,6 +35,7 @@ local function boot(saved, characterSaved, compatibility)
         state.objects[#state.objects + 1] = widget
         if name then env[name] = widget end
         function widget:RegisterEvent(value)
+            assert(value ~= "CURSOR_UPDATE", "Attempt to register unknown event CURSOR_UPDATE")
             if value == "COMBAT_LOG_EVENT_UNFILTERED" then
                 state.combatLogRegistrations = state.combatLogRegistrations + 1
                 if not state.legacyCombatLog then
@@ -199,7 +200,11 @@ local function boot(saved, characterSaved, compatibility)
             "SetPushedTexture", "SetClipsChildren", "SetReverseFill" }) do
             widget[method] = function() end
         end
-        function widget:SetPoint(...) self._points[#self._points + 1] = { ... } end
+        function widget:SetPoint(...)
+            local point = { ... }
+            assert(point[2] ~= self, "Cannot anchor a frame to itself")
+            self._points[#self._points + 1] = point
+        end
         function widget:GetNumPoints() return #self._points end
         function widget:GetPoint(index) return unpack(self._points[index] or {}, 1, 5) end
         function widget:ClearAllPoints() self._points = {}; self.allPoints = nil end
@@ -260,6 +265,7 @@ local function boot(saved, characterSaved, compatibility)
             self:SetMouseClickEnabled(value)
             self:SetMouseMotionEnabled(value)
         end
+        function widget:IsMouseEnabled() return self.mouseEnabled ~= false end
         function widget:SetTexture(value) self.textureValue = value end
         function widget:SetAtlas(value) self.atlas = value end
         function widget:SetDesaturated(value) self.desaturated = value end
@@ -299,6 +305,21 @@ local function boot(saved, characterSaved, compatibility)
             widget.Text, widget.Low, widget.High = Widget(nil, widget), Widget(nil, widget), Widget(nil, widget)
         elseif template == "UICheckButtonTemplate" then
             widget.Text = Widget(nil, widget)
+        elseif template == "PanelTabButtonTemplate" or template == "AuctionHouseFrameDisplayModeTabTemplate" then
+            -- Both native templates inherit parentArray="Tabs" in FrameXML.
+            parent.Tabs = parent.Tabs or {}
+            table.insert(parent.Tabs, widget)
+            widget:SetSize(110, 32)
+            widget.label = widget:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            widget.label:SetPoint("CENTER")
+            for _, key in ipairs({ "normal", "active", "glow" }) do
+                local art = widget:CreateTexture()
+                widget[key] = art
+                art:SetAllPoints()
+                art:SetTexture("NativeTab-" .. key)
+                art:SetDrawLayer(key == "glow" and "HIGHLIGHT" or "ARTWORK", 0)
+                if key == "active" then art:Hide() end
+            end
         end
         state.widgets[#state.widgets + 1] = widget
         if not frame then frame = widget end
@@ -3750,6 +3771,14 @@ do
     event("MERCHANT_SHOW")
     local merchant = env.SmallerUIReviewVendorFlips
     check(merchant and merchant:IsShown(), "Verified inventory exposes the vendor review button")
+    local refresh, cursorRefreshes = addon.RefreshVendorFlipUI, 0
+    addon.RefreshVendorFlipUI = function(...)
+        cursorRefreshes = cursorRefreshes + 1
+        return refresh(...)
+    end
+    event("CURSOR_CHANGED")
+    check(cursorRefreshes == 1, "The supported cursor event refreshes merchant flip availability")
+    addon.RefreshVendorFlipUI = refresh
     state.Click(merchant)
     local review = env.SmallerUIVendorFlipReview
     check(review.rows[1].item.guid == "new-a" and review.rows[1].toggle:GetChecked()
@@ -3940,22 +3969,7 @@ do
     env.CreateFrame = function(kind, name, parent, template)
         local widget = create(kind, name, parent, template)
         if template == "AuctionHouseFrameDisplayModeTabTemplate" then
-            parent.Tabs = parent.Tabs or {}
-            table.insert(parent.Tabs, widget)
             widget:SetSize(136, 32)
-            widget.label = widget:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            widget.label:SetPoint("CENTER")
-            widget.normal = widget:CreateTexture()
-            widget.normal:SetTexture("NativeInactiveTab")
-            widget.normal:SetAllPoints()
-            widget.active = widget:CreateTexture()
-            widget.active:SetTexture("NativeActiveTab")
-            widget.active:SetAllPoints()
-            widget.active:Hide()
-            widget.glow = widget:CreateTexture()
-            widget.glow:SetTexture("NativeTabHighlight")
-            widget.glow:SetAllPoints()
-            widget.glow:SetDrawLayer("HIGHLIGHT", 0)
         end
         return widget
     end
@@ -4047,6 +4061,34 @@ do
     x, y, w, h = RootRect(rail)
     check(x >= 0 and y >= 0 and x + w <= 900 and y + h <= 500 and rail.frameStrata == "DIALOG",
         "A compact viewport keeps every rotated tab on screen above adjacent windows")
+    local getRect = secondTab.GetRect
+    secondTab.GetRect = function() end
+    addon:LayoutAuctionTabs()
+    check(firstTab:GetAlpha() == 1 and secondTab:GetAlpha() == 1 and late:GetAlpha() == 1
+        and firstTab:IsMouseEnabled() and not firstSide:IsShown() and not rail.failed,
+        "Unresolved native geometry leaves every original tab visible and clickable")
+    secondTab.GetRect = getRect
+    addon:LayoutAuctionTabs()
+    check(firstTab:GetAlpha() == 0 and firstSide:IsShown() and secondSide:IsShown(),
+        "The rail takes over only after all replacement tabs have usable geometry")
+    local failures = 0
+    firstTab.normal.GetTexture = function() failures = failures + 1; error("Simulated native texture failure") end
+    local ok = pcall(addon.LayoutAuctionTabs, addon)
+    check(ok and rail.failed and not rail:IsShown() and not rail:GetScript("OnUpdate")
+        and firstTab:GetAlpha() == 1 and secondTab:GetAlpha() == 1 and late:GetAlpha() == 1
+        and firstTab:IsMouseEnabled() and secondTab:IsMouseEnabled() and late:IsMouseEnabled(),
+        "A styling failure restores all Auctionator and Forever QoL controllers and stops the failing updater")
+    check(not firstSide:IsShown() and not secondSide:IsShown() and not late.qolSideTab:IsShown()
+        and addon.auctionTabLayoutError:find("Simulated native texture failure", 1, true),
+        "Failed replacements are hidden and the styling diagnostic is retained")
+    selected = false
+    state.Click(late)
+    state.Click(firstTab)
+    check(selected and first:IsShown() and not second:IsShown(),
+        "Auctionator and Forever QoL remain selectable through their original bottom tabs after fallback")
+    addon:LayoutAuctionTabs()
+    check(failures == 1 and firstTab:GetAlpha() == 1,
+        "Later layout callbacks cannot hide restored tabs or repeat the same styling failure")
     house:Hide()
     check(not rail:IsVisible(), "Auction tabs disappear with the auction house")
 end
@@ -4079,6 +4121,8 @@ do
     check(tab.template == "PanelTabButtonTemplate" and tab._points[1][2] == merchant.Tabs[2]
         and x + width <= mx + mw - 12,
         "Resale Deals uses a native tab beside Buyback within the merchant border")
+    check(#merchant.Tabs == 2 and tab:GetParent() ~= merchant and tab:GetParent().Tabs[1] == tab,
+        "The native template registers Resale Deals in an isolated parent instead of the merchant's Tabs array")
     for index = 1, 1000 do offers[index] = {} end
     addon.VendorResale.Settings = function() return { autoOpen = false } end
     addon:RefreshVendorResale()
@@ -4181,6 +4225,39 @@ do
         "All four equipment display choices survive reloading saved settings")
     check(page.content:GetHeight() == 350 and switches[4][1]._points[1][3] == -274,
         "The equipment controls fit the scrollable Vendor Deals settings section")
+end
+
+do
+    local env, state = boot(nil)
+    local addon = state.addon
+    state.geometry = true
+    local house = env.CreateFrame("Frame", nil, env.UIParent)
+    house:SetSize(800, 538)
+    house:SetPoint("CENTER")
+    env.AuctionHouseFrame = house
+    local create = env.CreateFrame
+    env.CreateFrame = function(kind, name, parent, template)
+        local button = create(kind, name, parent, template)
+        if kind == "Button" and parent:GetName() == "SmallerUIAuctionTabRail" then
+            local createLabel = button.CreateFontString
+            button.CreateFontString = function(...)
+                local label = createLabel(...)
+                label.SetRotation = nil
+                return label
+            end
+        end
+        return button
+    end
+    local panel = create("Frame", nil, house)
+    panel:Hide()
+    local ok, source = pcall(addon.CreateAuctionFeatureTab, addon, "UnrotatedFallbackTab", panel, "Vendor Deals")
+    check(ok and source:GetAlpha() == 1 and source:IsMouseEnabled() and env.SmallerUIAuctionTabRail.failed,
+        "A client lacking rotated font support retains a usable native tab without interrupting feature creation")
+    state.Click(source)
+    check(panel:IsShown(), "A feature panel still opens after replacement construction fails")
+    local later = addon:CreateAuctionFeatureTab("LaterFallbackTab", create("Frame", nil, house), "Vendor Resale")
+    check(later:GetAlpha() == 1 and later:IsMouseEnabled() and not later.qolSideTab,
+        "Tabs added after styling is disabled remain in the normal visible bottom row")
 end
 
 print(string.format("Passed %d checks (%s).", passed, _VERSION))

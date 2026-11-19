@@ -2,16 +2,27 @@ local _, Addon = ...
 local features = {}
 local tabRoot
 local rail, railTabs = nil, {}
+local layoutActive
 local RAIL_PADDING, RAIL_GAP, RAIL_TOP = 24, 10, 54
 
--- Keep the library's buttons as invisible controllers. Copy their native art
--- into real, vertical hit targets so library selection and late tab additions
--- continue to work without a horizontal mouse region over neighbouring UI.
+local function RestoreOriginalTabs()
+    for _, button in ipairs(railTabs) do
+        button.source:SetAlpha(button.sourceAlpha)
+        button.source:EnableMouse(button.sourceMouse)
+        button:Hide()
+    end
+end
+
+-- Build replacements without changing the originals. Only hand input and
+-- visibility over once every visible tab has usable art and screen geometry.
 local function RailTab(source)
     if source.qolSideTab then return end
     local button = CreateFrame("Button", nil, rail)
-    source.qolSideTab = button
+    button:Hide()
     button.source, button.art = source, {}
+    button.sourceAlpha = source:GetAlpha()
+    button.sourceMouse = not source.IsMouseEnabled or source:IsMouseEnabled()
+    railTabs[#railTabs + 1] = button
     button.label = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     button.label:SetPoint("CENTER")
     button.label:SetWordWrap(false)
@@ -29,30 +40,31 @@ local function RailTab(source)
         button.hover = false
         Addon:LayoutAuctionTabs()
     end)
-    source:SetAlpha(0)
-    source:EnableMouse(false)
     source:HookScript("OnShow", function() Addon:LayoutAuctionTabs() end)
     source:HookScript("OnHide", function() Addon:LayoutAuctionTabs() end)
-    railTabs[#railTabs + 1] = button
+    source.qolSideTab = button
 end
 
 local function CopyTabArt(button)
     local source = button.source
     local sx, sy, sw, sh = source:GetRect()
-    if not sx then return button:GetWidth(), button:GetHeight() end
+    if not sx or not sy or sw <= 0 or sh <= 0 then return end
     local regions = source.GetRegions and { source:GetRegions() } or {}
     local minX, minY, maxX, maxY = 0, 0, sw, sh
-    local textures = {}
+    local textures, hasArt = {}, false
     for _, region in ipairs(regions) do
         if region:GetObjectType() == "Texture" then
             local x, y, w, h = region:GetRect()
             if x and y then
                 textures[#textures + 1] = { region, x - sx, y - sy, w, h }
+                local layer = region:GetDrawLayer()
+                if region:GetTexture() and region:IsShown() and layer ~= "HIGHLIGHT" then hasArt = true end
                 minX, minY = math.min(minX, x - sx), math.min(minY, y - sy)
                 maxX, maxY = math.max(maxX, x - sx + w), math.max(maxY, y - sy + h)
             end
         end
     end
+    if not hasArt then return end
     local width, height = maxY - minY, maxX - minX
     button:SetSize(width, height)
     for index, entry in ipairs(textures) do
@@ -78,7 +90,7 @@ local function CopyTabArt(button)
     local text = source.GetFontString and source:GetFontString()
     button.label:SetText(source:GetText())
     if text then
-        button.label:SetFont(text:GetFont())
+        if button.label:SetFont(text:GetFont()) == false then error("Unable to copy the native tab font") end
         button.label:SetTextColor(text:GetTextColor())
         local tx, ty = text:GetCenter()
         if tx then
@@ -98,25 +110,27 @@ local function RootRect(frame)
     return x * scale, y * scale, w * scale, h * scale
 end
 
-function Addon:LayoutAuctionTabs()
-    if not rail or not AuctionHouseFrame:IsShown() then return end
+local function LayoutAuctionTabs()
     local house = AuctionHouseFrame
     local library = LibStub and LibStub("LibAHTab-1-0", true)
     for _, source in ipairs(library and library.internalState and library.internalState.Tabs or {}) do RailTab(source) end
+    for _, entry in ipairs(features) do RailTab(entry.button) end
     local width, height, visible = 0, 0, {}
     for _, button in ipairs(railTabs) do
-        button:SetShown(button.source:IsVisible())
-        if button:IsShown() then
+        if button.source:IsVisible() then
             local w, h = CopyTabArt(button)
+            if not w or w <= 0 or h <= 0 then RestoreOriginalTabs(); return end
             width, height = math.max(width, w), height + h + RAIL_GAP
             visible[#visible + 1] = button
+        else
+            button:Hide()
         end
     end
-    if #visible == 0 then rail:SetSize(1, 1); return end
+    if #visible == 0 then RestoreOriginalTabs(); rail:SetSize(1, 1); return end
     rail:Show()
     height = height - RAIL_GAP
     local hx, hy, hw, hh = RootRect(house)
-    if not hx then return end
+    if not hx then RestoreOriginalTabs(); return end
     local houseScale = house:GetEffectiveScale() / UIParent:GetEffectiveScale()
     local screenWidth, screenHeight = UIParent:GetWidth(), UIParent:GetHeight()
     local padding = RAIL_PADDING * houseScale
@@ -165,6 +179,32 @@ function Addon:LayoutAuctionTabs()
         button:SetFrameLevel(level + 1)
         offset = offset + button:GetHeight() + RAIL_GAP
     end
+    local rx, ry, rw, rh = RootRect(rail)
+    if not rx then RestoreOriginalTabs(); return end
+    assert(rx >= 0 and ry >= 0 and rw > 0 and rh > 0
+        and rx + rw <= screenWidth + 1 and ry + rh <= screenHeight + 1, "Auction tab rail is outside the viewport")
+    for _, button in ipairs(visible) do
+        button:Show()
+        button.source:SetAlpha(0)
+        button.source:EnableMouse(false)
+    end
+end
+
+function Addon:LayoutAuctionTabs()
+    if not rail or rail.failed or layoutActive or not AuctionHouseFrame:IsShown() then return end
+    layoutActive = true
+    local ok, problem = pcall(LayoutAuctionTabs)
+    if not ok then
+        -- Styling must never strand Auctionator or Forever QoL behind hidden
+        -- controllers. Leave the library and its bottom-row anchors intact.
+        RestoreOriginalTabs()
+        rail.failed = true
+        rail:SetScript("OnUpdate", nil)
+        rail:Hide()
+        self.auctionTabLayoutError = tostring(problem)
+        self:Print("Auction tab styling could not be applied; standard tabs restored. " .. tostring(problem))
+    end
+    layoutActive = nil
 end
 
 local function EnsureRail(house)
@@ -260,7 +300,6 @@ function Addon:CreateAuctionFeatureTab(id, panel, text)
     end
     if not library and house.SetDisplayMode and hooksecurefunc then hooksecurefunc(house, "SetDisplayMode", Close) end
     house:HookScript("OnHide", Close)
-    RailTab(button)
     self:LayoutAuctionTabs()
     return button
 end
