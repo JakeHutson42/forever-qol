@@ -57,7 +57,7 @@ function Gaps:VisibleRows()
     for _, row in ipairs(self.rows) do
         local reference = row.tiers and Reference(row.tiers, row.target, settings)
         local target = reference and math.min(reference, row.target) or row.target
-        if (not row.tiers or reference) and row.price <= BuyLimit(target, row.cut, settings) then
+        if not row.depleted and (not row.tiers or reference) and row.price <= BuyLimit(target, row.cut, settings) then
             rows[#rows + 1] = row
         end
     end
@@ -94,6 +94,15 @@ function Gaps:Publish(scan, priorRows, preview)
                 item.gap, item.price, item.target, item.cut, item.scope = true, item.low, target, scan.cut, scan.scope
                 item.classID = scan.coverage and scan.coverage.classID
                 item.margin = math.floor(target * (1 - scan.cut)) - item.price
+                item.quantity = nil
+                if item.tiers then
+                    item.quantity = 0
+                    for _, tier in ipairs(item.tiers) do
+                        if tier.price > BuyLimit(target, scan.cut, settings) or tier.owned then break end
+                        item.quantity = item.quantity + tier.quantity
+                    end
+                end
+                item.quantityKnown = item.quantity ~= nil
                 rows[#rows + 1] = item
             end
         end
@@ -154,10 +163,19 @@ function Gaps:LiveOrder(row, gold)
     local ah, id = C_AuctionHouse, row.key.itemID
     local tiers = self:ReadTiers(id)
     local live = Reference(tiers, row.target, settings)
-    if not live then return end
+    if not live then
+        row.quantity, row.quantityKnown, row.depleted = 0, true, true
+        return
+    end
     local target = math.min(row.target or live, live)
     local limit = BuyLimit(target, row.cut, settings)
     local order = { deal = row, quantity = 0, cost = 0, target = target }
+    row.quantity, row.quantityKnown, row.depleted = 0, true, false
+    for _, tier in ipairs(tiers) do
+        if tier.price > limit or tier.owned then break end
+        row.quantity = row.quantity + tier.quantity
+    end
+    row.depleted = row.quantity == 0
     for _, tier in ipairs(tiers) do
         if tier.price > limit or tier.owned then break end
         local quantity = math.min(tier.quantity, math.floor((gold - order.cost) / tier.price), settings.gapUnits - order.quantity)

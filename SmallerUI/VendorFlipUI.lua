@@ -2,7 +2,7 @@ local _, Addon = ...
 local Flips = Addon.VendorFlipInventory
 local dialog, merchantButton
 local PAGE_SIZE = 8
-local WIDTH, HEIGHT = 590, 567
+local WIDTH, HEIGHT = 640, 655
 local gold = { 0.83, 0.66, 0.35, 1 }
 local sortChoices = { { "value", "Highest value" }, { "name", "Item name" } }
 
@@ -42,12 +42,13 @@ local function Render()
         if item then
             local checked = dialog.selected[item.guid] == true
             widget.toggle:SetChecked(checked)
-            widget:SetBackdropColor(checked and 0.14 or 0.09, checked and 0.20 or 0.12, checked and 0.20 or 0.14, 1)
-            widget:SetBackdropBorderColor(checked and 0.35 or 0.22, checked and 0.33 or 0.23, checked and 0.27 or 0.23, 1)
+            widget:SetBackdropColor(checked and 0.23 or 0.09, checked and 0.15 or 0.055, checked and 0.07 or 0.025, 0.92)
+            widget:SetBackdropBorderColor(checked and 0.65 or 0.32, checked and 0.46 or 0.23, checked and 0.23 or 0.12, 1)
             widget.icon:SetTexture(item.icon)
             widget.name:SetText(item.name)
             widget.quantity:SetText(("×%d"):format(item.count))
             widget.value:SetText(Money(item.value))
+            widget.detail:SetText("Vendor each  " .. Money(item.value / item.count))
         end
     end
 end
@@ -68,22 +69,21 @@ local function MakeDialog()
     dialog:SetClampedToScreen(true)
     dialog:SetMovable(true)
     dialog:EnableMouse(true)
-    UI.Backdrop(dialog, { 0.052, 0.073, 0.080, 1 }, gold)
+    Addon:AuctionSurface(dialog)
     dialog:Hide()
     table.insert(UISpecialFrames, dialog:GetName())
-    UI.Header(dialog, "Review Vendor Deals", "INV_Misc_Coin_01", function() dialog:Hide() end)
+    UI.Header(dialog, "Review Vendor Deals", "INV_Misc_Coin_01", function() dialog:Hide() end, nil, 63)
     dialog:RegisterEvent("UI_SCALE_CHANGED")
     dialog:RegisterEvent("DISPLAY_SIZE_CHANGED")
     dialog:SetScript("OnEvent", FitDialog)
 
-    local search = CreateFrame("EditBox", "SmallerUIVendorFlipSearch", dialog, "BackdropTemplate")
-    search:SetSize(364, 28)
-    search:SetPoint("TOPLEFT", 16, -87)
+    local search = UI.EditBox(dialog, "SmallerUIVendorFlipSearch", GameFontHighlightSmall)
+    search:SetSize(414, 28)
+    search:SetPoint("TOPLEFT", 16, -78)
     search:SetAutoFocus(false)
     search:SetMaxLetters(80)
     search:SetFontObject(GameFontHighlightSmall)
     search:SetTextInsets(28, 8, 0, 0)
-    UI.Backdrop(search, { 0.036, 0.052, 0.060, 1 })
     local lens = search:CreateTexture(nil, "ARTWORK")
     lens:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
     lens:SetPoint("LEFT", 7, 0)
@@ -97,7 +97,7 @@ local function MakeDialog()
         Render()
     end)
     dialog.search, dialog.sort = search, "value"
-    UI.Select(dialog, "SmallerUIVendorFlipSort", 396, -87, 178, sortChoices, function() return dialog.sort end, function(value)
+    UI.Select(dialog, "SmallerUIVendorFlipSort", 446, -78, 178, sortChoices, function() return dialog.sort end, function(value)
         dialog.sort, dialog.page = value, 1
         Render()
     end)
@@ -128,21 +128,26 @@ local function MakeDialog()
     dialog.rows = {}
     for index = 1, PAGE_SIZE do
         local row = CreateFrame("Frame", nil, dialog, "BackdropTemplate")
-        row:SetPoint("TOPLEFT", 16, -187 - (index - 1) * 37)
-        row:SetSize(WIDTH - 32, 33)
+        row:SetPoint("TOPLEFT", 16, -187 - (index - 1) * 47)
+        row:SetSize(WIDTH - 32, 44)
         UI.Plate(row)
-        row.toggle = UI.Switch(row, nil, "", 7, -3, function(enabled)
-            if row.item then dialog.selected[row.item.guid] = enabled end
+        row.toggle = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        row.toggle:SetSize(28, 28)
+        row.toggle:SetPoint("LEFT", 8, 0)
+        row.toggle:SetScript("OnClick", function(self)
+            if row.item then dialog.selected[row.item.guid] = self:GetChecked() == true end
             Render()
         end)
         row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetSize(26, 26)
+        row.icon:SetSize(32, 32)
         row.icon:SetPoint("LEFT", 53, 0)
         row.icon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
-        row.name = UI.Label(row, "", 89, -9, "GameFontHighlight", 269)
+        row.name = UI.Label(row, "", 89, -6, "GameFontHighlight", 300)
         row.name:SetWordWrap(false)
-        row.quantity = RightLabel(row, "", 146, -10, "GameFontHighlightSmall")
-        row.value = RightLabel(row, "", 11, -10, "GameFontNormalSmall")
+        row.detail = UI.Label(row, "", 89, -25, "GameFontHighlightSmall", 300)
+        row.detail:SetTextColor(0.83, 0.74, 0.59)
+        row.quantity = RightLabel(row, "", 146, -15, "GameFontHighlightSmall")
+        row.value = RightLabel(row, "", 11, -15, "GameFontNormalSmall")
         row:EnableMouse(true)
         row:SetScript("OnEnter", function(self)
             if not self.item then return end
@@ -153,8 +158,8 @@ local function MakeDialog()
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         dialog.rows[index] = row
     end
-    dialog.prev = UI.Button(dialog, nil, "‹", 16, -487, 34, function() dialog.page = dialog.page - 1; Render() end)
-    dialog.next = UI.Button(dialog, nil, "›", 111, -487, 34, function() dialog.page = dialog.page + 1; Render() end)
+    dialog.prev = UI.Button(dialog, nil, "‹", 16, -570, 34, function() dialog.page = dialog.page - 1; Render() end)
+    dialog.next = UI.Button(dialog, nil, "›", 111, -570, 34, function() dialog.page = dialog.page + 1; Render() end)
     UI.Tooltip(dialog.prev, "Previous page")
     UI.Tooltip(dialog.next, "Next page")
     dialog.pageLabel = dialog:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -163,11 +168,11 @@ local function MakeDialog()
     footer:SetPoint("BOTTOMLEFT", 1, 1)
     footer:SetPoint("BOTTOMRIGHT", -1, 1)
     footer:SetHeight(44)
-    UI.Plate(footer, { 0.12, 0.15, 0.16, 1 })
+    UI.Plate(footer, { 0.12, 0.07, 0.03, 0.96 })
     dialog.summary = UI.Label(footer, "", 15, -8, "GameFontHighlightSmall")
     dialog.total = UI.Label(footer, "", 15, -24, "GameFontNormalSmall")
-    dialog.cancel = UI.Button(footer, nil, "Cancel", 345, -9, 95, function() dialog:Hide() end)
-    dialog.sell = UI.Button(footer, nil, "Sell Selected", 448, -9, 124, function()
+    dialog.cancel = UI.Button(footer, nil, "Cancel", 395, -9, 95, function() dialog:Hide() end)
+    dialog.sell = UI.Button(footer, nil, "Sell Selected", 500, -9, 124, function()
         local reviewed = {}
         for guid, item in pairs(dialog.items) do
             if dialog.selected[guid] then reviewed[#reviewed + 1] = item end

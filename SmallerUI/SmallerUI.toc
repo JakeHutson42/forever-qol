@@ -35,6 +35,7 @@ AuctionPriceGaps.lua
 VendorDeals.lua
 AuctionScanner.lua
 AuctionScanProgress.lua
+AuctionUI.lua
 VendorDealOptions.lua
 VendorFlipInventory.lua
 VendorFlipUI.lua

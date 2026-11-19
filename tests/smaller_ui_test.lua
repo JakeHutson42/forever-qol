@@ -122,7 +122,7 @@ local function boot(saved, characterSaved, compatibility)
         end
         function widget:IsShown() return self.shown end
         function widget:SetShown(value) if value then self:Show() else self:Hide() end end
-        function widget:GetFrameLevel() return 1 end
+        function widget:GetFrameLevel() return self.frameLevel or 1 end
         function widget:GetName() return name end
         function widget:SetSize(width, height) self.width, self.height = width, height end
         function widget:GetSize() return self:GetWidth(), self:GetHeight() end
@@ -216,6 +216,34 @@ local function boot(saved, characterSaved, compatibility)
         function widget:SetTexelSnappingBias(value) self.texelBias = value end
         function widget:SetSnapToPixelGrid(value) self.snapToGrid = value end
         function widget:SetTexCoord(...) self.texCoords = { ... } end
+        function widget:SetRotation(value) self.rotation = value end
+        function widget:SetFrameLevel(value) self.frameLevel = value end
+        function widget:SetFrameStrata(value) self.frameStrata = value end
+        function widget:GetObjectType() return self.kind or "Frame" end
+        function widget:GetChildren()
+            local children = {}
+            for _, object in ipairs(state.widgets) do
+                if object.parent == self then children[#children + 1] = object end
+            end
+            return unpack(children)
+        end
+        function widget:GetRegions()
+            local regions = {}
+            for _, object in ipairs(state.objects) do
+                if object.parent == self and (object.kind == "Texture" or object.kind == "FontString") then
+                    regions[#regions + 1] = object
+                end
+            end
+            return unpack(regions)
+        end
+        function widget:GetFontString() return self.label end
+        function widget:GetFont() return self.fontPath or "Fonts\\FRIZQT__.TTF", self.fontSize or 12, self.fontFlags end
+        function widget:GetTexture() return self.textureValue end
+        function widget:GetTexCoord() return unpack(self.texCoords or { 0, 0, 0, 1, 1, 0, 1, 1 }) end
+        function widget:GetVertexColor() return unpack(self.vertexColor or { 1, 1, 1, 1 }) end
+        function widget:GetTextColor() return unpack(self.textColor or { 1, 0.82, 0, 1 }) end
+        function widget:SetDrawLayer(layer, sublevel) self.layer, self.sublevel = layer, sublevel end
+        function widget:GetDrawLayer() return self.layer or "ARTWORK", self.sublevel or 0 end
         function widget:AddMaskTexture(mask)
             assert(not self.mask and mask.kind == "MaskTexture", "A texture received an invalid or duplicate mask")
             self.mask = mask
@@ -3081,6 +3109,8 @@ do
     event("COMMODITY_SEARCH_RESULTS_UPDATED", 2)
     check(deals.purchase.quantity == 2 and deals.purchase.cost == 60,
         "The budget reserves gold and selects only affordable commodity units at profitable tiers")
+    check(deals.rows[1].quantity == 4 and deals.rows[1].quantityKnown and tab.rows[1].stock:GetText() == "4 available",
+        "Live stock shows all profitable units even when the purchase budget only covers some")
     state.Click(tab.purchase)
     check(requests.quote and requests.quote[2] == 2 and deals.stage == "quote" and not tab.purchase:IsEnabled(),
         "The commodity quote is sent before the client button is disabled")
@@ -3101,6 +3131,8 @@ do
     event("PLAYER_MONEY")
     PressSpace()
     event("COMMODITY_PURCHASE_SUCCEEDED")
+    check(deals.rows[1].quantity == 2 and not deals.rows[1].depleted,
+        "A partial purchase subtracts confirmed units and retains the remaining stock")
     check(requests.quote[2] == 2 and #purchases == 1 and deals.queue.index == 2,
         "Only the approved commodity quantity is purchased and the queue waits for confirmation")
     check(addon.character.vendorFlipInventory.receipts[1].cost == 60,
@@ -3124,6 +3156,13 @@ do
     event("AUCTION_HOUSE_PURCHASE_COMPLETED", 10)
     check(purchases[2][1] == 10 and purchases[2][2] == 35 and not deals.pending and tab.all.enabled,
         "The confirmed buyout uses the live auction ID and price and releases the controls")
+    check(deals.rows[2].depleted and #deals:VisibleRows() == 1 and not tab.rows[2].frame:IsShown(),
+        "An exhausted item row disappears after confirmation even after the queue was cleared")
+    deals:Prepare("row", deals.rows[2])
+    event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
+    check(not deals.queue and deals.rows[2].quantity == 0,
+        "A confirmed auction ID cannot be offered again while cached search results are stale")
+    itemResults[1].auctionID = 14
 
     deals:Prepare("row", deals.rows[2])
     event("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
@@ -3219,6 +3258,8 @@ do
     check(deals.stage == "quoteReady" and deals.purchase.quantity == 12 and deals.purchase.cost == 220
         and deals.purchase.profit == 65 and deals.purchase.target == 25 and deals.purchase.deposit == 100,
         "Live tiers combine the 15c and 20c groups, cap the price, and show after-cut profit and deposit separately")
+    check(gaps.rows[1].quantity == 12 and gaps.rows[1].quantityKnown,
+        "Price Gap stock includes only the discounted units below the resale limit")
     state.Click(tab.purchase)
     event("COMMODITY_PRICE_UPDATED", 21, 221)
     check(not deals.queue and gaps.status:find("exceeds", 1, true), "A worse market quote ends the gap purchase")
@@ -3296,16 +3337,13 @@ do
     event("AUCTION_HOUSE_SHOW")
     flush()
     local tab = env.SmallerUIAuctionDeals
-    local launcher
-    for _, widget in ipairs(state.widgets) do
-        if widget:GetParent() == env.AuctionHouseFrame and widget:GetText() == "Vendor Deals" then launcher = widget end
-    end
+    local launcher = env.SmallerUIVendorDeals
     check(env.Auctionator == nil and env.LibStub == nil and launcher and not tab:IsShown(),
         "Forever QoL supplies its own Auction House launcher without Auctionator or LibAHTab")
     state.Click(launcher)
     tab:SetHeight(320)
     addon:RefreshVendorDealsTab()
-    check(tab.visibleRows == 4, "The standalone survey reserves room for progress and the purchase footer on a short viewport")
+    check(tab.visibleRows == 1, "The survey reserves room for larger rows, grouped controls and the purchase footer on a short viewport")
     tab.progress:SetWidth(400)
     state.Click(tab.scanAll)
     check(requests[1][1] == "browse" and #requests[1][2].itemClassFilters == 0, "Scan All issues a native browse query")
@@ -3432,7 +3470,8 @@ do
 
     local results = { { itemKey = cloth, minPrice = 15, totalQuantity = 10 },
         { itemKey = weapon, minPrice = 19, totalQuantity = 1 } }
-    state.Click(tab.mode)
+    state.Click(launcher)
+    state.Click(tab.vendorMode)
     state.Click(tab.scanAll)
     browse, full = results, true
     event("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
@@ -3879,6 +3918,269 @@ do
     check(legacy and legacy.messages[1][1] == "An older message" and not legacy.account
         and restoredAddon:GetWhisperDisplayName(legacy) == "Battle.net contact" and not saved["bnet:19"],
         "Legacy private history keeps its message without reusing a previous session's identity")
+end
+
+do
+    local env, state = boot(nil)
+    local addon = state.addon
+    state.geometry = true
+    state.scale = 0.65
+    local house = env.CreateFrame("Frame", nil, env.UIParent)
+    house:SetSize(800, 538)
+    house:SetPoint("BOTTOMLEFT", env.UIParent, "BOTTOMLEFT", 60, 100)
+    house:SetScale(0.8)
+    house.Tabs = {}
+    env.AuctionHouseFrame = house
+    for index = 1, 3 do
+        house.Tabs[index] = env.CreateFrame("Button", nil, house)
+        house.Tabs[index]:SetSize(90, 32)
+        house.Tabs[index]:SetPoint("BOTTOMLEFT", house, "BOTTOMLEFT", 20 + (index - 1) * 94, -32)
+    end
+    local create = env.CreateFrame
+    env.CreateFrame = function(kind, name, parent, template)
+        local widget = create(kind, name, parent, template)
+        if template == "AuctionHouseFrameDisplayModeTabTemplate" then
+            parent.Tabs = parent.Tabs or {}
+            table.insert(parent.Tabs, widget)
+            widget:SetSize(136, 32)
+            widget.label = widget:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            widget.label:SetPoint("CENTER")
+            widget.normal = widget:CreateTexture()
+            widget.normal:SetTexture("NativeInactiveTab")
+            widget.normal:SetAllPoints()
+            widget.active = widget:CreateTexture()
+            widget.active:SetTexture("NativeActiveTab")
+            widget.active:SetAllPoints()
+            widget.active:Hide()
+            widget.glow = widget:CreateTexture()
+            widget.glow:SetTexture("NativeTabHighlight")
+            widget.glow:SetAllPoints()
+            widget.glow:SetDrawLayer("HIGHLIGHT", 0)
+        end
+        return widget
+    end
+    env.PanelTemplates_SelectTab = function(tab)
+        tab.normal:Hide(); tab.active:Show(); tab:SetEnabled(false)
+    end
+    env.PanelTemplates_DeselectTab = function(tab)
+        if tab.normal then tab.normal:Show(); tab.active:Hide() end
+        tab:SetEnabled(true)
+    end
+    local first, second = create("Frame", nil, house), create("Frame", nil, house)
+    first:Hide()
+    second:Hide()
+    local firstTab = addon:CreateAuctionFeatureTab("TestVendorTab", first, "Vendor Deals")
+    local secondTab = addon:CreateAuctionFeatureTab("TestResaleTab", second, "Vendor Resale")
+    check(firstTab.template == "AuctionHouseFrameDisplayModeTabTemplate" and #house.Tabs == 3
+        and firstTab._points[1][2] == house.Tabs[3] and secondTab._points[1][2] == firstTab,
+        "Library controllers retain their order without entering Blizzard's tab array")
+    local rail = env.SmallerUIAuctionTabRail
+    local firstSide, secondSide = firstTab.qolSideTab, secondTab.qolSideTab
+    check(firstTab:GetAlpha() == 0 and firstTab.mouseEnabled == false and firstSide:GetWidth() == 32
+        and firstSide:GetHeight() == 136 and firstSide.label.rotation == -math.pi / 2,
+        "Auction tabs rotate native art, label and hit target clockwise without leaving horizontal mouse blockers")
+    local coords = firstSide.art[1].texCoords
+    check(coords[1] == 0 and coords[2] == 1 and coords[3] == 1 and coords[4] == 1
+        and coords[5] == 0 and coords[6] == 0 and coords[7] == 1 and coords[8] == 0,
+        "Native tab texture coordinates rotate clockwise rather than stretching the artwork")
+    state.Click(firstSide)
+    state.Click(secondSide)
+    check(second:IsShown() and not first:IsShown(), "Choosing a feature tab closes the previous feature panel")
+    check(secondSide.art[2]:IsShown() and not secondSide.art[1]:IsShown() and not secondSide:IsEnabled(),
+        "The vertical tab preserves native selected art and disabled selection behaviour")
+    firstSide.scripts.OnEnter(firstSide)
+    check(firstSide.art[3]:IsShown(), "Hover displays the rotated native highlight")
+    firstSide.scripts.OnLeave(firstSide)
+    check(not firstSide.art[3]:IsShown(), "The native highlight clears on mouse leave")
+    house.Tabs[1].scripts.OnClick(house.Tabs[1])
+    check(not second:IsShown(), "Returning to a native auction tab clears the feature panel")
+
+    local function RootRect(widget)
+        local x, y, w, h = widget:GetRect()
+        local ratio = widget:GetEffectiveScale() / env.UIParent:GetEffectiveScale()
+        return x * ratio, y * ratio, w * ratio, h * ratio
+    end
+    local hx, hy, hw, hh = RootRect(house)
+    local x, y, w, h = RootRect(rail)
+    check(x >= hx + hw + 19.19 and math.abs(y + h - (hy + hh - 54 * 0.8)) < 0.01,
+        "The rail starts near the upper right with 24 units of padding at the auction window's scale")
+    local side = create("Frame", nil, house)
+    side:SetSize(250, 460)
+    side:SetPoint("TOPLEFT", house, "TOPRIGHT", 4, -40)
+    addon:LayoutAuctionTabs()
+    local px, _, pw = RootRect(side)
+    x = RootRect(rail)
+    check(x >= px + pw + 19.19, "An auction buy window moves the rail past its right border with full padding")
+    local adjacent = create("Frame", nil, env.UIParent)
+    adjacent:SetSize(140, 420)
+    adjacent:SetPoint("TOPLEFT", side, "TOPRIGHT", 8, 0)
+    addon:LayoutAuctionTabs()
+    px, _, pw = RootRect(adjacent)
+    x = RootRect(rail)
+    check(x >= px + pw + 19.19, "Adjacent top-level windows also participate in auction tab clearance")
+    adjacent:Hide()
+    side:Hide()
+    addon:LayoutAuctionTabs()
+    x = RootRect(rail)
+    check(x < px, "Closing side windows restores the rail to the auction's right edge")
+
+    local library = { internalState = { Tabs = {} } }
+    env.LibStub = function() return library end
+    local late = env.CreateFrame("Button", nil, house, "AuctionHouseFrameDisplayModeTabTemplate")
+    late:SetText("Shopping")
+    late:SetPoint("BOTTOMLEFT", house, "BOTTOMLEFT", 300, -32)
+    local selected = false
+    late:SetScript("OnClick", function() selected = true end)
+    library.internalState.Tabs[1] = late
+    rail.scripts.OnUpdate(rail, 0.2)
+    check(late.qolSideTab and late:GetAlpha() == 0 and not late.mouseEnabled,
+        "Late Auctionator library tabs join the vertical rail automatically")
+    state.Click(late.qolSideTab)
+    check(selected, "Auctionator tabs retain their library click callbacks")
+    firstTab:Hide(); secondTab:Hide(); late:Hide()
+    check(not firstSide:IsShown() and not secondSide:IsShown() and rail:IsShown(),
+        "Hidden tabs collapse without disabling discovery of future library tabs")
+    firstTab:Show(); secondTab:Show(); late:Show()
+    env.UIParent:SetSize(900, 500)
+    side:Show()
+    addon:LayoutAuctionTabs()
+    x, y, w, h = RootRect(rail)
+    check(x >= 0 and y >= 0 and x + w <= 900 and y + h <= 500 and rail.frameStrata == "DIALOG",
+        "A compact viewport keeps every rotated tab on screen above adjacent windows")
+    house:Hide()
+    check(not rail:IsVisible(), "Auction tabs disappear with the auction house")
+end
+
+do
+    local env, state = boot(nil)
+    state.geometry = true
+    local addon = state.addon
+    local merchant = env.CreateFrame("Frame", nil, env.UIParent)
+    env.MerchantFrame = merchant
+    merchant:SetSize(336, 444)
+    merchant:SetPoint("BOTTOMLEFT", env.UIParent, "BOTTOMLEFT", 80, 100)
+    merchant.Tabs = {}
+    for index = 1, 2 do
+        local tab = env.CreateFrame("Button", nil, merchant)
+        tab:SetSize(84, 32)
+        tab:SetPoint("BOTTOMLEFT", merchant, "BOTTOMLEFT", 12 + (index - 1) * 87, -32)
+        merchant.Tabs[index] = tab
+    end
+    env.PanelTemplates_TabResize = function(tab, _, width) tab:SetSize(width, 32) end
+    env.PanelTemplates_SelectTab = function(tab) tab.selected = true; tab:SetEnabled(false) end
+    env.PanelTemplates_DeselectTab = function(tab) tab.selected = false; tab:SetEnabled(true) end
+    addon.VendorResale.CanReadMerchant = function() return true end
+    local offers = {}
+    addon.VendorResale.Offers = function() return offers end
+    addon:RefreshVendorResale()
+    local tab = env.SmallerUIResaleDealsButton
+    local x, _, width = tab:GetRect()
+    local mx, _, mw = merchant:GetRect()
+    check(tab.template == "PanelTabButtonTemplate" and tab._points[1][2] == merchant.Tabs[2]
+        and x + width <= mx + mw - 12,
+        "Resale Deals uses a native tab beside Buyback within the merchant border")
+    for index = 1, 1000 do offers[index] = {} end
+    addon.VendorResale.Settings = function() return { autoOpen = false } end
+    addon:RefreshVendorResale()
+    local _, _, newWidth = tab:GetRect()
+    check(newWidth == width and tab:GetText() == "Resale Deals (1000)",
+        "Large offer counts cannot grow the vendor tab beyond its allotted width")
+    merchant.Tabs[1]:SetWidth(148)
+    merchant.Tabs[2]:SetWidth(148)
+    merchant.Tabs[2]:ClearAllPoints()
+    merchant.Tabs[2]:SetPoint("TOPLEFT", merchant.Tabs[1], "TOPRIGHT", 3, 0)
+    addon:RefreshVendorResale()
+    x, _, width = tab:GetRect()
+    check(x + width <= mx + mw - 12 and merchant.Tabs[1]:GetWidth() < 148,
+        "A crowded native merchant row shares its width instead of overflowing the vendor border")
+    for index = #offers, 1, -1 do offers[index] = nil end
+    merchant.GetRight = function(self) local left, _, size = self:GetRect(); return left + size end
+    merchant.GetLeft = function(self) return self:GetRect() end
+    merchant.selectedTab = 1
+    state.Click(tab)
+    check(tab.selected and tab:IsEnabled() and merchant.selectedTab == 1,
+        "The review tab shows native selected art while remaining clickable and preserving merchant buying")
+    state.Click(tab)
+    check(not tab.selected and not env.SmallerUIVendorResale:IsShown(),
+        "Closing the review restores the native unselected vendor tab state")
+end
+
+do
+    local env, state = boot(nil)
+    local addon, metadata = state.addon, {
+        { 0, 2 }, { 1, 2 }, { 0, 4 }, { 1, 4 },
+        { 2, 2 }, { 2, 4 }, { 0, 15 }, { 1, 15 },
+    }
+    local deals = addon.VendorDeals
+    env.GetMoneyString = function(value) return value .. "c" end
+    env.C_Item = { GetItemInfo = function(value)
+        local id = tonumber(value) or tonumber(value:match("item:(%d+)"))
+        local info = metadata[id]
+        if info then return "Item " .. id, "item:" .. id, info[1], nil, nil, nil, nil, nil, nil, nil, 100, info[2] end
+    end }
+    env.C_AuctionHouse = { GetItemKeyInfo = function(key) return { itemName = "Item " .. key.itemID } end }
+    local session = deals:BeginSnapshot(false, nil, nil, true)
+    local entries = {}
+    for id = 1, #metadata do entries[id] = { itemKey = { itemID = id }, minPrice = 20, totalQuantity = 1 } end
+    session:Push(entries)
+    session:Preview()
+    deals.scanning = false
+    check(#deals:VisibleRows() == 8 and deals.rows[1].quality == 0 and deals.rows[1].classID == 2,
+        "Broad scans retain actual equipment class and quality, with every flip type visible by default")
+    addon:ShowOptions("vendorDeals")
+    local page = env.SmallerUIVendorDealOptions
+    page:SelectTab("vendor")
+    local switches = {
+        { env.SmallerUIVendorGreyWeapons, "showGreyWeapons" },
+        { env.SmallerUIVendorWhiteWeapons, "showWhiteWeapons" },
+        { env.SmallerUIVendorGreyArmour, "showGreyArmour" },
+        { env.SmallerUIVendorWhiteArmour, "showWhiteArmour" },
+    }
+    for id, entry in ipairs(switches) do
+        check(entry[1]:GetChecked(), "Equipment display switches default to on")
+        state.Click(entry[1])
+        local visible = deals:VisibleRows()
+        local hidden = true
+        for _, row in ipairs(visible) do if row.key.itemID == id then hidden = false end end
+        check(#visible == 7 and hidden and addon:GetVendorDealSettings()[entry[2]] == false,
+            "Each equipment switch hides only its own quality and item type immediately")
+        state.Click(entry[1])
+        check(#deals:VisibleRows() == 8 and #deals.rows == 8,
+            "Re-enabling an equipment type restores its scan leads without rescanning")
+    end
+    for _, entry in ipairs(switches) do state.Click(entry[1]) end
+    check(#deals:VisibleRows() == 4 and #deals.rows == 8,
+        "Hiding grey and white equipment preserves higher qualities, other item classes, and scan history")
+    for _, mode in ipairs({ "all", "budget" }) do
+        deals:Prepare(mode)
+        local allowed = deals.queue and #deals.queue == 4
+        for _, row in ipairs(deals.queue or {}) do if row.key and row.key.itemID <= 4 then allowed = false end end
+        check(allowed, "Both purchase queues exclude equipment types hidden by settings")
+        deals:Cancel()
+    end
+    deals:Prepare("all", deals.rows[1])
+    check(not deals.queue, "A stale row cannot start a direct purchase check for a hidden equipment type")
+    deals:Prepare("all")
+    state.Click(switches[1][1])
+    check(not deals.queue and #deals:VisibleRows() == 5,
+        "Changing equipment filters cancels an existing vendor queue before refreshing the list")
+    local gapQueue = { index = 1 }
+    deals.queue, deals.mode = gapQueue, "gap"
+    state.Click(switches[1][1])
+    check(deals.queue == gapQueue and deals.mode == "gap", "Vendor display filters preserve an independent Price Gaps check")
+    deals.queue, deals.mode = nil, nil
+    local unknown = { key = { itemID = 9 }, vendor = 100, price = 20 }
+    check(deals:IsItemVisible(unknown), "Uncached item metadata is not treated as grey equipment")
+    metadata[9] = { 0, 4 }
+    check(not deals:IsItemVisible(unknown) and unknown.classID == 4,
+        "Item metadata arriving later applies the saved equipment display filter")
+    local _, restored = boot(env.SmallerUIDB)
+    local saved = restored.addon:GetVendorDealSettings()
+    check(saved.showGreyWeapons == false and saved.showWhiteWeapons == false
+        and saved.showGreyArmour == false and saved.showWhiteArmour == false,
+        "All four equipment display choices survive reloading saved settings")
+    check(page.content:GetHeight() == 350 and switches[4][1]._points[1][3] == -274,
+        "The equipment controls fit the scrollable Vendor Deals settings section")
 end
 
 print(string.format("Passed %d checks (%s).", passed, _VERSION))

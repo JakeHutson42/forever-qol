@@ -1,7 +1,54 @@
 local _, Addon = ...
 local Resale, Market = Addon.VendorResale, Addon.VendorResaleMarket
 local panel, button
-local WIDTH, HEIGHT, PAGE_SIZE = 486, 416, 5
+local WIDTH, HEIGHT, PAGE_SIZE = 526, 494, 5
+
+local function MerchantTabState()
+    if not button then return end
+    -- This opens an auxiliary review window; leave the merchant's buy/buyback
+    -- selection alone so reading and buying stock retains native behaviour.
+    if panel and panel:IsShown() then
+        if PanelTemplates_SelectTab then PanelTemplates_SelectTab(button) end
+        button:SetEnabled(true)
+    elseif PanelTemplates_DeselectTab then
+        PanelTemplates_DeselectTab(button)
+    end
+end
+
+local function PositionMerchantTab()
+    local tabs = MerchantFrame.Tabs and #MerchantFrame.Tabs > 0 and MerchantFrame.Tabs
+        or { MerchantFrameTab1, MerchantFrameTab2 }
+    local previous = tabs[#tabs]
+    button:ClearAllPoints()
+    local width = 120
+    if previous then
+        button:SetPoint("TOPLEFT", previous, "TOPRIGHT", 3, 0)
+        local mx, _, mw = MerchantFrame:GetRect()
+        local tx, _, tw = previous:GetRect()
+        if mx and tx then
+            local room = mx + mw - tx - tw - 20
+            if room < 40 and PanelTemplates_TabResize then
+                -- Long localized labels or another addon's merchant tab must
+                -- share the available row rather than push this tab outside it.
+                local share = math.max(40, (mw - 32 - 3 * #tabs) / (#tabs + 1))
+                for index, tab in ipairs(tabs) do
+                    PanelTemplates_TabResize(tab, 0, share, 40, share)
+                    tab:ClearAllPoints()
+                    if index == 1 then tab:SetPoint("TOPLEFT", MerchantFrame, "BOTTOMLEFT", 12, 2)
+                    else tab:SetPoint("TOPLEFT", tabs[index - 1], "TOPRIGHT", 3, 0) end
+                end
+                width = math.min(width, share)
+            else
+                width = math.max(40, math.min(width, room))
+            end
+        end
+    else
+        button:SetPoint("TOPLEFT", MerchantFrame, "BOTTOMLEFT", 12, 2)
+        width = math.max(40, math.min(width, MerchantFrame:GetWidth() - 32))
+    end
+    if PanelTemplates_TabResize then PanelTemplates_TabResize(button, 0, width, 40, width) end
+    MerchantTabState()
+end
 
 local function Money(value)
     return GetMoneyString(math.floor(value), true)
@@ -11,6 +58,7 @@ local function Close()
     Resale.dismissed = true
     panel.selected = nil
     panel:Hide()
+    MerchantTabState()
 end
 
 local function Position()
@@ -37,15 +85,13 @@ local auctionPanel, auctionButton
 
 local function MakeAuctionPanel()
     local UI = Addon.OptionsUI
-    auctionPanel = CreateFrame("Frame", "SmallerUIVendorResaleAuctions", UIParent, "BackdropTemplate")
-    auctionPanel:SetSize(440, 295)
-    auctionPanel:SetPoint("CENTER")
+    auctionPanel = CreateFrame("Frame", "SmallerUIVendorResaleAuctions", AuctionHouseFrame, "BackdropTemplate")
+    auctionPanel:SetPoint("TOPLEFT", 20, -65)
+    auctionPanel:SetPoint("BOTTOMRIGHT", -20, 32)
     auctionPanel:SetClampedToScreen(true)
     auctionPanel:SetMovable(true)
-    auctionPanel:SetFrameStrata("DIALOG")
     auctionPanel:EnableMouse(true)
-    UI.WindowSurface(auctionPanel)
-    UI.Header(auctionPanel, "Vendor Resale", "INV_Misc_Coin_01", function() auctionPanel:Hide() end, nil, 53)
+    Addon:AuctionSurface(auctionPanel)
     auctionPanel:Hide()
     table.insert(UISpecialFrames, auctionPanel:GetName())
     auctionPanel.title = UI.Label(auctionPanel, "", 16, -70, "GameFontNormal", 307)
@@ -55,8 +101,12 @@ local function MakeAuctionPanel()
     auctionPanel.progress:SetPoint("TOPRIGHT", -16, -185)
     auctionPanel.summary = UI.Label(auctionPanel, "", 16, -210, "GameFontHighlightSmall", 405)
     auctionPanel.index = 1
-    auctionPanel.history = UI.Button(auctionPanel, nil, "Sale History", 329, -63, 95, function()
-        auctionPanel.showHistory = not auctionPanel.showHistory
+    auctionPanel.purchases = Addon:AuctionModeTab(auctionPanel, nil, "Purchases", nil, function()
+        auctionPanel.showHistory, auctionPanel.index = false, 1
+        Addon:RefreshVendorResaleAuctions()
+    end)
+    auctionPanel.history = Addon:AuctionModeTab(auctionPanel, nil, "Sale History", auctionPanel.purchases, function()
+        auctionPanel.showHistory = true
         auctionPanel.index = 1
         Addon:RefreshVendorResaleAuctions()
     end)
@@ -92,15 +142,10 @@ function Addon:RefreshVendorResaleAuctions()
     local ledger = Resale:Ledger()
     local count = #ledger.purchases
     if not auctionButton then
-        auctionButton = self.OptionsUI.Button(AuctionHouseFrame, "SmallerUIResaleAuctionButton", "Vendor Resale", 0, 0, 130, function()
-            if not auctionPanel then MakeAuctionPanel() end
-            auctionPanel:SetShown(not auctionPanel:IsShown())
-            Addon:RefreshVendorResaleAuctions()
-        end)
-        auctionButton:ClearAllPoints()
-        auctionButton:SetPoint("TOP", AuctionHouseFrame, "BOTTOM", -95, -6)
+        MakeAuctionPanel()
+        auctionButton = self:CreateAuctionFeatureTab("SmallerUIResaleAuctionButton", auctionPanel, "Vendor Resale")
+        auctionPanel:HookScript("OnShow", function() Addon:RefreshVendorResaleAuctions() end)
     end
-    auctionButton:SetText(count > 0 and ("Vendor Resale (%d)"):format(count) or "Vendor Resale")
     auctionButton:Show()
     if not auctionPanel or not auctionPanel:IsShown() then return end
     local panel = auctionPanel
@@ -109,7 +154,10 @@ function Addon:RefreshVendorResaleAuctions()
     panel.refresh:SetText(stock and "Stop Stock Scan" or "Refresh Vendor Stock")
     panel.refresh:SetEnabled(stock ~= nil or (not Scanner.job and not Scanner:HasFlight() and not Sales.pending
         and not Sales.query and not Sales.quote and not Addon.VendorDeals.queue and not InCombatLockdown()))
-    panel.history:SetText(panel.showHistory and "Purchases" or "Sale History")
+    if PanelTemplates_SelectTab then
+        PanelTemplates_SelectTab(panel.showHistory and panel.history or panel.purchases)
+        PanelTemplates_DeselectTab(panel.showHistory and panel.purchases or panel.history)
+    end
     if panel.showHistory then
         local total = #ledger.outcomes
         panel.index = math.max(1, math.min(panel.index, total))
@@ -184,18 +232,20 @@ local function MakePanel()
     panel:SetClampedToScreen(true)
     panel:SetMovable(true)
     panel:EnableMouse(true)
-    UI.WindowSurface(panel)
+    Addon:AuctionSurface(panel)
     UI.Header(panel, "Vendor Resale", "INV_Misc_Coin_01", Close, nil, 53)
     panel:Hide()
     table.insert(UISpecialFrames, panel:GetName())
     panel:SetScript("OnHide", function()
         Resale.dismissed = true
         panel.selected, panel.confirming, panel.quoted = nil, false, nil
+        MerchantTabState()
     end)
+    panel:HookScript("OnShow", MerchantTabState)
     panel:RegisterEvent("UI_SCALE_CHANGED")
     panel:RegisterEvent("DISPLAY_SIZE_CHANGED")
     panel:SetScript("OnEvent", function() if panel:IsShown() then Position() end end)
-    panel.status = UI.Label(panel, "", 16, -64, "GameFontHighlightSmall", 450)
+    panel.status = UI.Label(panel, "", 16, -64, "GameFontHighlightSmall", WIDTH - 32)
     local heading = CreateFrame("Frame", nil, panel, "BackdropTemplate")
     heading:SetPoint("TOPLEFT", 14, -88)
     heading:SetSize(WIDTH - 28, 23)
@@ -207,14 +257,16 @@ local function MakePanel()
     panel.rows, panel.page, panel.packs = {}, 1, 1
     for index = 1, PAGE_SIZE do
         local row = CreateFrame("Button", nil, panel, "BackdropTemplate")
-        row:SetSize(WIDTH - 28, 29)
-        row:SetPoint("TOPLEFT", 14, -113 - (index - 1) * 30)
+        row:SetSize(WIDTH - 28, 41)
+        row:SetPoint("TOPLEFT", 14, -113 - (index - 1) * 44)
         row:SetHighlightTexture("Interface\\Buttons\\WHITE8X8", "ADD")
         row:GetHighlightTexture():SetVertexColor(0.48, 0.34, 0.13, 0.24)
         row.icon = row:CreateTexture(nil, "ARTWORK")
         row.icon:SetPoint("LEFT", 6, 0)
-        row.icon:SetSize(21, 21)
-        row.item = Column(UI, row, "", 34, -8, 174)
+        row.icon:SetSize(28, 28)
+        row.item = Column(UI, row, "", 42, -5, 163)
+        row.stock = Column(UI, row, "", 42, -23, 163)
+        row.stock:SetTextColor(0.82, 0.73, 0.57)
         row.cost = Column(UI, row, "", 208, -8, 74, true)
         row.ask = Column(UI, row, "", 285, -8, 74, true)
         row.profit = Column(UI, row, "", 364, -8, 85, true)
@@ -232,28 +284,28 @@ local function MakePanel()
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         panel.rows[index] = row
     end
-    panel.prev = UI.Button(panel, nil, "<", 16, -268, 25, function()
+    panel.prev = UI.Button(panel, nil, "<", 16, -338, 25, function()
         panel.page, panel.selected = panel.page - 1, nil
         Addon:RefreshVendorResale()
     end)
-    panel.pageText = UI.Label(panel, "", 50, -275, "GameFontHighlightSmall")
-    panel.next = UI.Button(panel, nil, ">", 91, -268, 25, function()
+    panel.pageText = UI.Label(panel, "", 50, -345, "GameFontHighlightSmall")
+    panel.next = UI.Button(panel, nil, ">", 91, -338, 25, function()
         panel.page, panel.selected = panel.page + 1, nil
         Addon:RefreshVendorResale()
     end)
-    UI.Button(panel, nil, "Settings", 390, -268, 80, function() Addon:ShowOptions("vendorDeals") end)
-    panel.details = UI.Label(panel, "", 16, -306, "GameFontHighlightSmall", WIDTH - 34)
-    panel.total = UI.Label(panel, "", 16, -363, "GameFontHighlightSmall", 248)
-    panel.minus = UI.Button(panel, nil, "−", 270, -361, 24, function()
+    UI.Button(panel, nil, "Settings", WIDTH - 96, -338, 80, function() Addon:ShowOptions("vendorDeals") end)
+    panel.details = UI.Label(panel, "", 16, -376, "GameFontHighlightSmall", WIDTH - 34)
+    panel.total = UI.Label(panel, "", 16, -441, "GameFontHighlightSmall", 248)
+    panel.minus = UI.Button(panel, nil, "−", 270, -439, 24, function()
         panel.packs, panel.confirming = panel.packs - 1, false
         Addon:RefreshVendorResale()
     end)
-    panel.count = UI.Label(panel, "", 301, -369, "GameFontHighlightSmall")
-    panel.plus = UI.Button(panel, nil, "+", 338, -361, 24, function()
+    panel.count = UI.Label(panel, "", 301, -447, "GameFontHighlightSmall")
+    panel.plus = UI.Button(panel, nil, "+", 338, -439, 24, function()
         panel.packs, panel.confirming = panel.packs + 1, false
         Addon:RefreshVendorResale()
     end)
-    panel.buy = UI.Button(panel, nil, "Buy…", 372, -361, 98, function()
+    panel.buy = UI.Button(panel, nil, "Buy…", 382, -439, 128, function()
         if not panel.offer then return end
         if panel.confirming then
             panel.confirming = false
@@ -279,7 +331,8 @@ function Addon:RefreshVendorResale()
     end
     local offers, emptyMessage = Resale:Offers()
     if not button then
-        button = self.OptionsUI.Button(MerchantFrame, "SmallerUIResaleDealsButton", "Resale Deals", 0, 0, 120, function()
+        button = CreateFrame("Button", "SmallerUIResaleDealsButton", MerchantFrame, "PanelTabButtonTemplate")
+        button:SetScript("OnClick", function()
             if panel and panel:IsShown() then Close(); return end
             if not panel then MakePanel() end
             Resale.dismissed, panel.page = false, 1
@@ -287,11 +340,14 @@ function Addon:RefreshVendorResale()
             panel:Show()
             Addon:RefreshVendorResale()
         end)
-        button:ClearAllPoints()
-        button:SetPoint("TOP", MerchantFrame, "BOTTOM", 0, -4)
+        button:RegisterEvent("UI_SCALE_CHANGED")
+        button:RegisterEvent("DISPLAY_SIZE_CHANGED")
+        button:SetScript("OnEvent", PositionMerchantTab)
+        MerchantFrame:HookScript("OnShow", PositionMerchantTab)
     end
     button:SetText(#offers > 0 and ("Resale Deals (%d)"):format(#offers) or "Resale Deals")
     button:Show()
+    PositionMerchantTab()
     if #offers > 0 and Resale:Settings().autoOpen ~= false and not Resale.dismissed and (not panel or not panel:IsShown()) then
         if not panel then MakePanel() end
         panel.page = 1
@@ -324,6 +380,9 @@ function Addon:RefreshVendorResale()
             self.OptionsUI.Plate(row, offer == selected and { 0.27, 0.19, 0.09, 1 } or { 0.12, 0.09, 0.06, 0.9 })
             row.icon:SetTexture(offer.icon)
             row.item:SetText(offer.name)
+            row.stock:SetText(offer.available and offer.available >= 0
+                and ("%d packs available · %d each"):format(offer.available, offer.pack)
+                or ("Unlimited · %d per pack"):format(offer.pack))
             row.cost:SetText(Money(offer.price))
             row.ask:SetText(Money(offer.ask))
             row.profit:SetText(Money(offer.profit))

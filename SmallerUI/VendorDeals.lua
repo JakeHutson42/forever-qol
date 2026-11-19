@@ -1,6 +1,6 @@
 local addonName, Addon = ...
 local frame = CreateFrame("Frame")
-local Deals = { rows = {}, status = "Scan the Auction House to find items below vendor value." }
+local Deals = { rows = {}, purchasedAuctions = {}, status = "Scan the Auction House to find items below vendor value." }
 local Gaps = Addon.AuctionPriceGaps
 Addon.VendorDeals = Deals
 
@@ -41,12 +41,29 @@ function Addon:GetAuctionSettings()
     return settings
 end
 
+local equipmentFilters = {
+    [0] = { [2] = "showGreyWeapons", [4] = "showGreyArmour" },
+    [1] = { [2] = "showWhiteWeapons", [4] = "showWhiteArmour" },
+}
+
+function Deals:IsItemVisible(row)
+    local quality, classID = row.quality, row.classID
+    if (quality == nil or classID == nil) and C_Item and C_Item.GetItemInfo then
+        local _, _, itemQuality, _, _, _, _, _, _, _, _, itemClass = C_Item.GetItemInfo(row.link or row.key.itemID)
+        quality, classID = quality or itemQuality, classID or itemClass
+        row.quality, row.classID = quality, classID
+    end
+    local key = equipmentFilters[quality] and equipmentFilters[quality][classID]
+    return not key or Addon:GetVendorDealSettings()[key] ~= false
+end
+
 function Deals:VisibleRows()
     local minimum = Addon:GetAuctionSettings().vendorMinimum
-    if minimum <= 0 then return self.rows end
     local rows = {}
     for _, row in ipairs(self.rows) do
-        if row.vendor - row.price >= minimum then rows[#rows + 1] = row end
+        if not row.depleted and row.vendor - row.price >= minimum and self:IsItemVisible(row) then
+            rows[#rows + 1] = row
+        end
     end
     return rows
 end
@@ -94,12 +111,12 @@ function Deals:BeginSnapshot(replicate, marketScope, coverage, native)
         Deals.scanning = true
         if not native then Deals:Cancel("Checking vendor prices from the scan…") end
     end
-    local function Check(key, price, link)
+    local function Check(key, price, link, quantity, tiers)
         local metadata = itemInfo[key.itemID]
         if not metadata then
-            local name, itemLink, quality, _, _, _, _, _, _, icon, vendor = C_Item.GetItemInfo(link or key.itemID)
+            local name, itemLink, quality, _, _, _, _, _, _, icon, vendor, classID = C_Item.GetItemInfo(link or key.itemID)
             if vendor == nil then return false end
-            metadata = { name = name, link = itemLink, vendor = vendor, quality = quality, icon = icon }
+            metadata = { name = name, link = itemLink, vendor = vendor, quality = quality, icon = icon, classID = classID }
             itemInfo[key.itemID] = metadata
         end
         if metadata.vendor > price then
@@ -110,11 +127,21 @@ function Deals:BeginSnapshot(replicate, marketScope, coverage, native)
                 row = { key = key, name = info and info.itemName or metadata.name or tostring(key.itemID),
                     link = link or metadata.link, vendor = metadata.vendor, price = price,
                     icon = info and info.iconFileID or metadata.icon, quality = info and info.quality or metadata.quality,
-                    scope = scan.scope, classID = coverage and coverage.classID }
+                    scope = scan.scope, classID = metadata.classID or coverage and coverage.classID, quantity = 0 }
                 byKey[id], rows[#rows + 1] = row, row
             elseif price < row.price then
                 row.price, row.link = price, link or row.link
             end
+            local eligible
+            if tiers then
+                eligible = 0
+                for _, tier in ipairs(tiers) do
+                    if not tier.owned and metadata.vendor - tier.price >= Addon:GetAuctionSettings().vendorMinimum
+                        and tier.price < metadata.vendor then eligible = eligible + tier.quantity end
+                end
+            end
+            row.quantity = row.quantity + (eligible or quantity or 0)
+            row.quantityKnown = tiers ~= nil or replicate
         end
         return true
     end
@@ -155,14 +182,14 @@ function Deals:BeginSnapshot(replicate, marketScope, coverage, native)
                     end
                 end
                 Gaps:Add(scan, key, price, quantity, link, entry.tiers, entry.observedAt)
-                if checkDeals and not Check(key, price, link) then
+                if checkDeals and not Check(key, price, link, quantity, entry.tiers) then
                     local requests = missing[key.itemID]
                     if not requests then
                         requests = {}
                         missing[key.itemID] = requests
                         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(key.itemID) end
                     end
-                    requests[#requests + 1] = { key = key, price = price, link = link }
+                    requests[#requests + 1] = { key = key, price = price, link = link, quantity = quantity, tiers = entry.tiers }
                 end
             end
         end
@@ -194,7 +221,7 @@ function Deals:BeginSnapshot(replicate, marketScope, coverage, native)
             local unavailable = 0
             for _, requests in pairs(missing) do
                 for _, request in ipairs(requests) do
-                    if not Check(request.key, request.price, request.link) then
+                    if not Check(request.key, request.price, request.link, request.quantity, request.tiers) then
                         unavailable = unavailable + 1
                         break
                     end
@@ -229,7 +256,7 @@ local function LiveOffers(row, commodity)
         local result
         if commodity then result = ah.GetCommoditySearchResultInfo(itemID, index)
         else result = ah.GetItemSearchResultInfo(row.key, index) end
-        if result and not result.containsOwnerItem and not result.containsAccountItem
+        if result and not Deals.purchasedAuctions[result.auctionID] and not result.containsOwnerItem and not result.containsAccountItem
             and result.quantity and result.quantity > 0 then
             local unitPrice = commodity and result.unitPrice or nil
             local cost = unitPrice and unitPrice * result.quantity or not commodity and result.buyoutAmount
@@ -366,6 +393,9 @@ local function ReadSearch(event, key)
         return
     end
     Deals.search = nil
+    row.quantity, row.quantityKnown = 0, true
+    for _, offer in ipairs(offers) do row.quantity = row.quantity + offer.quantity end
+    row.depleted = row.quantity == 0
     if #offers == 0 then
         AdvanceRow("No profitable live listings for this item.")
     elseif commodity then
@@ -378,6 +408,7 @@ end
 
 function Deals:Prepare(mode, row)
     local gap = row and row.gap
+    if row and not gap and not self:IsItemVisible(row) then return end
     local native = row and Addon.AuctionScanner.job
     if (not native and ((gap and Gaps.scanning) or (not gap and self.scanning))) or self.queue or self.pending
         or (not row and #self:VisibleRows() == 0) then return end
@@ -602,6 +633,10 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         local commodity = event == "COMMODITY_PURCHASE_SUCCEEDED"
         if purchase and ((commodity and purchase.unitPrice)
             or (not commodity and purchase.auctionID and first == purchase.auctionID)) then
+            if purchase.auctionID then Deals.purchasedAuctions[purchase.auctionID] = true end
+            local row = purchase.deal
+            row.quantity = math.max(0, (row.quantity or purchase.quantity) - purchase.quantity)
+            row.depleted = row.quantity == 0
             if purchase.deal.gap then
                 CompletePurchase("Purchase confirmed. Collect the mail for resale review. Target per item: "
                     .. GetMoneyString(purchase.target, true) .. ".")
