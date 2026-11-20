@@ -3988,109 +3988,25 @@ do
     check(firstTab.template == "AuctionHouseFrameDisplayModeTabTemplate" and #house.Tabs == 3
         and firstTab._points[1][2] == house.Tabs[3] and secondTab._points[1][2] == firstTab,
         "Library controllers retain their order without entering Blizzard's tab array")
-    local rail = env.SmallerUIAuctionTabRail
-    local firstSide, secondSide = firstTab.qolSideTab, secondTab.qolSideTab
-    check(firstTab:GetAlpha() == 0 and firstTab.mouseEnabled == false and firstSide:GetWidth() == 32
-        and firstSide:GetHeight() == 136 and firstSide.label.rotation == -math.pi / 2,
-        "Auction tabs rotate native art, label and hit target clockwise without leaving horizontal mouse blockers")
-    local coords = firstSide.art[1].texCoords
-    check(coords[1] == 0 and coords[2] == 1 and coords[3] == 1 and coords[4] == 1
-        and coords[5] == 0 and coords[6] == 0 and coords[7] == 1 and coords[8] == 0,
-        "Native tab texture coordinates rotate clockwise rather than stretching the artwork")
-    state.Click(firstSide)
-    state.Click(secondSide)
-    check(second:IsShown() and not first:IsShown(), "Choosing a feature tab closes the previous feature panel")
-    check(secondSide.art[2]:IsShown() and not secondSide.art[1]:IsShown() and not secondSide:IsEnabled(),
-        "The vertical tab preserves native selected art and disabled selection behaviour")
-    firstSide.scripts.OnEnter(firstSide)
-    check(firstSide.art[3]:IsShown(), "Hover displays the rotated native highlight")
-    firstSide.scripts.OnLeave(firstSide)
-    check(not firstSide.art[3]:IsShown(), "The native highlight clears on mouse leave")
+    check(not env.SmallerUIAuctionTabRail and not addon.LayoutAuctionTabs
+        and firstTab:GetAlpha() == 1 and secondTab:GetAlpha() == 1
+        and firstTab:IsMouseEnabled() and secondTab:IsMouseEnabled(),
+        "Auction features use their original visible native tabs without a side rail or hidden controllers")
+    state.Click(firstTab)
+    state.Click(secondTab)
+    check(second:IsShown() and not first:IsShown() and secondTab.active:IsShown() and not secondTab.normal:IsShown(),
+        "Bottom-row native tabs select their panels and retain WoW's selected artwork")
     house.Tabs[1].scripts.OnClick(house.Tabs[1])
     check(not second:IsShown(), "Returning to a native auction tab clears the feature panel")
-
-    local function RootRect(widget)
-        local x, y, w, h = widget:GetRect()
-        local ratio = widget:GetEffectiveScale() / env.UIParent:GetEffectiveScale()
-        return x * ratio, y * ratio, w * ratio, h * ratio
-    end
-    local hx, hy, hw, hh = RootRect(house)
-    local x, y, w, h = RootRect(rail)
-    check(x >= hx + hw + 19.19 and math.abs(y + h - (hy + hh - 54 * 0.8)) < 0.01,
-        "The rail starts near the upper right with 24 units of padding at the auction window's scale")
+    local firstAnchor = firstTab._points[1]
     local side = create("Frame", nil, house)
     side:SetSize(250, 460)
     side:SetPoint("TOPLEFT", house, "TOPRIGHT", 4, -40)
-    addon:LayoutAuctionTabs()
-    local px, _, pw = RootRect(side)
-    x = RootRect(rail)
-    check(x >= px + pw + 19.19, "An auction buy window moves the rail past its right border with full padding")
-    local adjacent = create("Frame", nil, env.UIParent)
-    adjacent:SetSize(140, 420)
-    adjacent:SetPoint("TOPLEFT", side, "TOPRIGHT", 8, 0)
-    addon:LayoutAuctionTabs()
-    px, _, pw = RootRect(adjacent)
-    x = RootRect(rail)
-    check(x >= px + pw + 19.19, "Adjacent top-level windows also participate in auction tab clearance")
-    adjacent:Hide()
-    side:Hide()
-    addon:LayoutAuctionTabs()
-    x = RootRect(rail)
-    check(x < px, "Closing side windows restores the rail to the auction's right edge")
-
-    local library = { internalState = { Tabs = {} } }
-    env.LibStub = function() return library end
-    local late = env.CreateFrame("Button", nil, house, "AuctionHouseFrameDisplayModeTabTemplate")
-    late:SetText("Shopping")
-    late:SetPoint("BOTTOMLEFT", house, "BOTTOMLEFT", 300, -32)
-    local selected = false
-    late:SetScript("OnClick", function() selected = true end)
-    library.internalState.Tabs[1] = late
-    rail.scripts.OnUpdate(rail, 0.2)
-    check(late.qolSideTab and late:GetAlpha() == 0 and not late.mouseEnabled,
-        "Late Auctionator library tabs join the vertical rail automatically")
-    state.Click(late.qolSideTab)
-    check(selected, "Auctionator tabs retain their library click callbacks")
-    firstTab:Hide(); secondTab:Hide(); late:Hide()
-    check(not firstSide:IsShown() and not secondSide:IsShown() and rail:IsShown(),
-        "Hidden tabs collapse without disabling discovery of future library tabs")
-    firstTab:Show(); secondTab:Show(); late:Show()
-    env.UIParent:SetSize(900, 500)
-    side:Show()
-    addon:LayoutAuctionTabs()
-    x, y, w, h = RootRect(rail)
-    check(x >= 0 and y >= 0 and x + w <= 900 and y + h <= 500 and rail.frameStrata == "DIALOG",
-        "A compact viewport keeps every rotated tab on screen above adjacent windows")
-    local getRect = secondTab.GetRect
-    secondTab.GetRect = function() end
-    addon:LayoutAuctionTabs()
-    check(firstTab:GetAlpha() == 1 and secondTab:GetAlpha() == 1 and late:GetAlpha() == 1
-        and firstTab:IsMouseEnabled() and not firstSide:IsShown() and not rail.failed,
-        "Unresolved native geometry leaves every original tab visible and clickable")
-    secondTab.GetRect = getRect
-    addon:LayoutAuctionTabs()
-    check(firstTab:GetAlpha() == 0 and firstSide:IsShown() and secondSide:IsShown(),
-        "The rail takes over only after all replacement tabs have usable geometry")
-    local failures = 0
-    firstTab.normal.GetTexture = function() failures = failures + 1; error("Simulated native texture failure") end
-    local ok = pcall(addon.LayoutAuctionTabs, addon)
-    check(ok and rail.failed and not rail:IsShown() and not rail:GetScript("OnUpdate")
-        and firstTab:GetAlpha() == 1 and secondTab:GetAlpha() == 1 and late:GetAlpha() == 1
-        and firstTab:IsMouseEnabled() and secondTab:IsMouseEnabled() and late:IsMouseEnabled(),
-        "A styling failure restores all Auctionator and Forever QoL controllers and stops the failing updater")
-    check(not firstSide:IsShown() and not secondSide:IsShown() and not late.qolSideTab:IsShown()
-        and addon.auctionTabLayoutError:find("Simulated native texture failure", 1, true),
-        "Failed replacements are hidden and the styling diagnostic is retained")
-    selected = false
-    state.Click(late)
-    state.Click(firstTab)
-    check(selected and first:IsShown() and not second:IsShown(),
-        "Auctionator and Forever QoL remain selectable through their original bottom tabs after fallback")
-    addon:LayoutAuctionTabs()
-    check(failures == 1 and firstTab:GetAlpha() == 1,
-        "Later layout callbacks cannot hide restored tabs or repeat the same styling failure")
+    check(firstTab._points[1] == firstAnchor and firstTab._points[1][2] == house.Tabs[3]
+        and secondTab._points[1][2] == firstTab and firstTab.label.rotation == nil,
+        "Opening a side window leaves the horizontal bottom-row tab anchors and labels unchanged")
     house:Hide()
-    check(not rail:IsVisible(), "Auction tabs disappear with the auction house")
+    check(not firstTab:IsVisible() and not secondTab:IsVisible(), "Auction tabs disappear with the auction house")
 end
 
 do
@@ -4118,9 +4034,10 @@ do
     local tab = env.SmallerUIResaleDealsButton
     local x, _, width = tab:GetRect()
     local mx, _, mw = merchant:GetRect()
-    check(tab.template == "PanelTabButtonTemplate" and tab._points[1][2] == merchant.Tabs[2]
+    check(tab.template == "PanelTabButtonTemplate" and tab._points[1][1] == "TOP"
+        and tab._points[1][2] == merchant and tab._points[1][3] == "BOTTOM" and tab._points[1][5] == -4
         and x + width <= mx + mw - 12,
-        "Resale Deals uses a native tab beside Buyback within the merchant border")
+        "Resale Deals keeps native WoW styling at its original position below the merchant")
     check(#merchant.Tabs == 2 and tab:GetParent() ~= merchant and tab:GetParent().Tabs[1] == tab,
         "The native template registers Resale Deals in an isolated parent instead of the merchant's Tabs array")
     for index = 1, 1000 do offers[index] = {} end
@@ -4135,8 +4052,8 @@ do
     merchant.Tabs[2]:SetPoint("TOPLEFT", merchant.Tabs[1], "TOPRIGHT", 3, 0)
     addon:RefreshVendorResale()
     x, _, width = tab:GetRect()
-    check(x + width <= mx + mw - 12 and merchant.Tabs[1]:GetWidth() < 148,
-        "A crowded native merchant row shares its width instead of overflowing the vendor border")
+    check(x + width <= mx + mw - 12 and merchant.Tabs[1]:GetWidth() == 148 and merchant.Tabs[2]:GetWidth() == 148,
+        "The restored merchant tab does not resize or reflow the native bottom tabs")
     for index = #offers, 1, -1 do offers[index] = nil end
     merchant.GetRight = function(self) local left, _, size = self:GetRect(); return left + size end
     merchant.GetLeft = function(self) return self:GetRect() end
@@ -4227,38 +4144,6 @@ do
         "The equipment controls fit the scrollable Vendor Deals settings section")
 end
 
-do
-    local env, state = boot(nil)
-    local addon = state.addon
-    state.geometry = true
-    local house = env.CreateFrame("Frame", nil, env.UIParent)
-    house:SetSize(800, 538)
-    house:SetPoint("CENTER")
-    env.AuctionHouseFrame = house
-    local create = env.CreateFrame
-    env.CreateFrame = function(kind, name, parent, template)
-        local button = create(kind, name, parent, template)
-        if kind == "Button" and parent:GetName() == "SmallerUIAuctionTabRail" then
-            local createLabel = button.CreateFontString
-            button.CreateFontString = function(...)
-                local label = createLabel(...)
-                label.SetRotation = nil
-                return label
-            end
-        end
-        return button
-    end
-    local panel = create("Frame", nil, house)
-    panel:Hide()
-    local ok, source = pcall(addon.CreateAuctionFeatureTab, addon, "UnrotatedFallbackTab", panel, "Vendor Deals")
-    check(ok and source:GetAlpha() == 1 and source:IsMouseEnabled() and env.SmallerUIAuctionTabRail.failed,
-        "A client lacking rotated font support retains a usable native tab without interrupting feature creation")
-    state.Click(source)
-    check(panel:IsShown(), "A feature panel still opens after replacement construction fails")
-    local later = addon:CreateAuctionFeatureTab("LaterFallbackTab", create("Frame", nil, house), "Vendor Resale")
-    check(later:GetAlpha() == 1 and later:IsMouseEnabled() and not later.qolSideTab,
-        "Tabs added after styling is disabled remain in the normal visible bottom row")
-end
 
 do
     local env, state = boot(nil)

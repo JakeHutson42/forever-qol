@@ -1,227 +1,7 @@
 local _, Addon = ...
 local features = {}
 local tabRoot
-local rail, railTabs = nil, {}
-local layoutActive
-local RAIL_PADDING, RAIL_GAP, RAIL_TOP = 24, 10, 54
 local TAVERN_ASPECT = 1 -- The shipped tavern texture is square.
-
-local function RestoreOriginalTabs()
-    for _, button in ipairs(railTabs) do
-        button.source:SetAlpha(button.sourceAlpha)
-        button.source:EnableMouse(button.sourceMouse)
-        button:Hide()
-    end
-end
-
--- Build replacements without changing the originals. Only hand input and
--- visibility over once every visible tab has usable art and screen geometry.
-local function RailTab(source)
-    if source.qolSideTab then return end
-    local button = CreateFrame("Button", nil, rail)
-    button:Hide()
-    button.source, button.art = source, {}
-    button.sourceAlpha = source:GetAlpha()
-    button.sourceMouse = not source.IsMouseEnabled or source:IsMouseEnabled()
-    railTabs[#railTabs + 1] = button
-    button.label = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    button.label:SetPoint("CENTER")
-    button.label:SetWordWrap(false)
-    button.label:SetRotation(-math.pi / 2)
-    button:SetScript("OnClick", function(_, mouseButton)
-        local click = source:GetScript("OnClick")
-        if click then click(source, mouseButton) end
-        Addon:LayoutAuctionTabs()
-    end)
-    button:SetScript("OnEnter", function()
-        button.hover = true
-        Addon:LayoutAuctionTabs()
-    end)
-    button:SetScript("OnLeave", function()
-        button.hover = false
-        Addon:LayoutAuctionTabs()
-    end)
-    source:HookScript("OnShow", function() Addon:LayoutAuctionTabs() end)
-    source:HookScript("OnHide", function() Addon:LayoutAuctionTabs() end)
-    source.qolSideTab = button
-end
-
-local function CopyTabArt(button)
-    local source = button.source
-    local sx, sy, sw, sh = source:GetRect()
-    if not sx or not sy or sw <= 0 or sh <= 0 then return end
-    local regions = source.GetRegions and { source:GetRegions() } or {}
-    local minX, minY, maxX, maxY = 0, 0, sw, sh
-    local textures, hasArt = {}, false
-    for _, region in ipairs(regions) do
-        if region:GetObjectType() == "Texture" then
-            local x, y, w, h = region:GetRect()
-            if x and y then
-                textures[#textures + 1] = { region, x - sx, y - sy, w, h }
-                local layer = region:GetDrawLayer()
-                if region:GetTexture() and region:IsShown() and layer ~= "HIGHLIGHT" then hasArt = true end
-                minX, minY = math.min(minX, x - sx), math.min(minY, y - sy)
-                maxX, maxY = math.max(maxX, x - sx + w), math.max(maxY, y - sy + h)
-            end
-        end
-    end
-    if not hasArt then return end
-    local width, height = maxY - minY, maxX - minX
-    button:SetSize(width, height)
-    for index, entry in ipairs(textures) do
-        local region, x, y, w, h = unpack(entry)
-        local copy = button.art[index]
-        if not copy then
-            copy = button:CreateTexture(nil, "ARTWORK")
-            button.art[index] = copy
-        end
-        local layer, sublevel = region:GetDrawLayer()
-        copy:SetDrawLayer(layer == "HIGHLIGHT" and "OVERLAY" or layer, sublevel)
-        copy:SetTexture(region:GetTexture())
-        local ulx, uly, llx, lly, urx, ury, lrx, lry = region:GetTexCoord()
-        copy:SetTexCoord(llx, lly, lrx, lry, ulx, uly, urx, ury)
-        copy:SetVertexColor(region:GetVertexColor())
-        copy:SetAlpha(region:GetAlpha())
-        copy:ClearAllPoints()
-        copy:SetPoint("TOPLEFT", button, "TOPLEFT", y - minY, -(x - minX))
-        copy:SetSize(h, w)
-        copy:SetShown(region:IsShown() and (layer ~= "HIGHLIGHT" or button.hover == true))
-    end
-    for index = #textures + 1, #button.art do button.art[index]:Hide() end
-    local text = source.GetFontString and source:GetFontString()
-    button.label:SetText(source:GetText())
-    if text then
-        if button.label:SetFont(text:GetFont()) == false then error("Unable to copy the native tab font") end
-        button.label:SetTextColor(text:GetTextColor())
-        local tx, ty = text:GetCenter()
-        if tx then
-            button.label:ClearAllPoints()
-            button.label:SetPoint("CENTER", button, "TOPLEFT", ty - sy - minY, -(tx - sx - minX))
-        end
-    end
-    button.label:SetWidth(math.max(1, height - 24))
-    button:SetEnabled(source:IsEnabled())
-    return width, height
-end
-
-local function RootRect(frame)
-    local x, y, w, h = frame:GetRect()
-    if not x or not y then return end
-    local scale = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    return x * scale, y * scale, w * scale, h * scale
-end
-
-local function LayoutAuctionTabs()
-    local house = AuctionHouseFrame
-    local library = LibStub and LibStub("LibAHTab-1-0", true)
-    for _, source in ipairs(library and library.internalState and library.internalState.Tabs or {}) do RailTab(source) end
-    for _, entry in ipairs(features) do RailTab(entry.button) end
-    local width, height, visible = 0, 0, {}
-    for _, button in ipairs(railTabs) do
-        if button.source:IsVisible() then
-            local w, h = CopyTabArt(button)
-            if not w or w <= 0 or h <= 0 then RestoreOriginalTabs(); return end
-            width, height = math.max(width, w), height + h + RAIL_GAP
-            visible[#visible + 1] = button
-        else
-            button:Hide()
-        end
-    end
-    if #visible == 0 then RestoreOriginalTabs(); rail:SetSize(1, 1); return end
-    rail:Show()
-    height = height - RAIL_GAP
-    local hx, hy, hw, hh = RootRect(house)
-    if not hx then RestoreOriginalTabs(); return end
-    local houseScale = house:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    local screenWidth, screenHeight = UIParent:GetWidth(), UIParent:GetHeight()
-    local padding = RAIL_PADDING * houseScale
-    local top = math.min(screenHeight - padding, hy + hh - RAIL_TOP * houseScale)
-    local scale = houseScale * math.min(1, math.max(1, math.min(hh - RAIL_TOP * houseScale - padding, top - padding)) / height)
-    local right, level = hx + hw, house:GetFrameLevel() + 30
-    local bottom = top - height * scale
-    local candidates = {}
-    local function Collect(parent, depth)
-        if not parent.GetChildren then return end
-        for _, child in ipairs({ parent:GetChildren() }) do
-            if child ~= rail and child ~= house and not child:IsForbidden() and child:IsVisible() then
-                local x, y, w, h = RootRect(child)
-                -- Exclude fullscreen managers, and join only adjacent windows
-                -- crossing the rail's vertical span. Work in UIParent units.
-                if x and w > 0 and w < screenWidth * 0.75 and y < top and y + h > bottom then
-                    candidates[#candidates + 1] = { x, x + w, child:GetFrameLevel() }
-                end
-                if depth > 0 then Collect(child, depth - 1) end
-            end
-        end
-    end
-    Collect(house, 2)
-    Collect(UIParent, 0)
-    for _ = 1, #candidates do
-        local previous = right
-        for _, rect in ipairs(candidates) do
-            if rect[1] >= hx and rect[1] <= right + padding * 2 and rect[2] > right then
-                right, level = rect[2], math.max(level, rect[3] + 10)
-            end
-        end
-        if right == previous then break end
-    end
-    -- On a cramped viewport keep the complete rail on screen above adjacent
-    -- panels, rather than letting the last column disappear past the edge.
-    local left = math.max(padding, math.min(right + padding, screenWidth - padding - width * scale))
-    rail:SetScale(scale / houseScale)
-    rail:SetFrameLevel(level)
-    rail:ClearAllPoints()
-    rail:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left / scale, top / scale)
-    rail:SetSize(width, height)
-    local offset = 0
-    for _, button in ipairs(visible) do
-        button:ClearAllPoints()
-        button:SetPoint("TOP", rail, "TOP", 0, -offset)
-        button:SetFrameLevel(level + 1)
-        offset = offset + button:GetHeight() + RAIL_GAP
-    end
-    local rx, ry, rw, rh = RootRect(rail)
-    if not rx then RestoreOriginalTabs(); return end
-    assert(rx >= 0 and ry >= 0 and rw > 0 and rh > 0
-        and rx + rw <= screenWidth + 1 and ry + rh <= screenHeight + 1, "Auction tab rail is outside the viewport")
-    for _, button in ipairs(visible) do
-        button:Show()
-        button.source:SetAlpha(0)
-        button.source:EnableMouse(false)
-    end
-end
-
-function Addon:LayoutAuctionTabs()
-    if not rail or rail.failed or layoutActive or not AuctionHouseFrame:IsShown() then return end
-    layoutActive = true
-    local ok, problem = pcall(LayoutAuctionTabs)
-    if not ok then
-        -- Styling must never strand Auctionator or Forever QoL behind hidden
-        -- controllers. Leave the library and its bottom-row anchors intact.
-        RestoreOriginalTabs()
-        rail.failed = true
-        rail:SetScript("OnUpdate", nil)
-        rail:Hide()
-        self.auctionTabLayoutError = tostring(problem)
-        self:Print("Auction tab styling could not be applied; standard tabs restored. " .. tostring(problem))
-    end
-    layoutActive = nil
-end
-
-local function EnsureRail(house)
-    if rail then return end
-    rail = CreateFrame("Frame", "SmallerUIAuctionTabRail", house)
-    rail:SetSize(1, 1)
-    rail:SetFrameStrata("DIALOG")
-    local elapsed = 0
-    rail:SetScript("OnUpdate", function(_, delta)
-        elapsed = elapsed + delta
-        if elapsed < 0.15 then return end
-        elapsed = 0
-        Addon:LayoutAuctionTabs()
-    end)
-    house:HookScript("OnShow", function() Addon:LayoutAuctionTabs() end)
-end
 
 function Addon:AuctionSurface(frame)
     local UI = self.OptionsUI
@@ -245,7 +25,6 @@ end
 
 function Addon:CreateAuctionFeatureTab(id, panel, text)
     local house = AuctionHouseFrame
-    EnsureRail(house)
     local library = LibStub and LibStub("LibAHTab-1-0", true)
     local button
     if library then
@@ -296,7 +75,6 @@ function Addon:CreateAuctionFeatureTab(id, panel, text)
     end
     if not library and house.SetDisplayMode and hooksecurefunc then hooksecurefunc(house, "SetDisplayMode", Close) end
     house:HookScript("OnHide", Close)
-    self:LayoutAuctionTabs()
     return button
 end
 
@@ -309,12 +87,3 @@ function Addon:AuctionModeTab(parent, name, label, previous, callback)
     button:SetScript("OnClick", callback)
     return button
 end
-
-local events = CreateFrame("Frame")
-events:RegisterEvent("AUCTION_HOUSE_SHOW")
-events:SetScript("OnEvent", function()
-    if AuctionHouseFrame then
-        EnsureRail(AuctionHouseFrame)
-        Addon:LayoutAuctionTabs()
-    end
-end)

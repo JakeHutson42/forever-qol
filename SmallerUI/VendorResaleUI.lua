@@ -16,36 +16,9 @@ local function MerchantTabState()
 end
 
 local function PositionMerchantTab()
-    local tabs = MerchantFrame.Tabs and #MerchantFrame.Tabs > 0 and MerchantFrame.Tabs
-        or { MerchantFrameTab1, MerchantFrameTab2 }
-    local previous = tabs[#tabs]
     button:ClearAllPoints()
+    button:SetPoint("TOP", MerchantFrame, "BOTTOM", 0, -4)
     local width = 120
-    if previous then
-        button:SetPoint("TOPLEFT", previous, "TOPRIGHT", 3, 0)
-        local mx, _, mw = MerchantFrame:GetRect()
-        local tx, _, tw = previous:GetRect()
-        if mx and tx then
-            local room = mx + mw - tx - tw - 20
-            if room < 40 and PanelTemplates_TabResize then
-                -- Long localized labels or another addon's merchant tab must
-                -- share the available row rather than push this tab outside it.
-                local share = math.max(40, (mw - 32 - 3 * #tabs) / (#tabs + 1))
-                for index, tab in ipairs(tabs) do
-                    PanelTemplates_TabResize(tab, 0, share, 40, share)
-                    tab:ClearAllPoints()
-                    if index == 1 then tab:SetPoint("TOPLEFT", MerchantFrame, "BOTTOMLEFT", 12, 2)
-                    else tab:SetPoint("TOPLEFT", tabs[index - 1], "TOPRIGHT", 3, 0) end
-                end
-                width = math.min(width, share)
-            else
-                width = math.max(40, math.min(width, room))
-            end
-        end
-    else
-        button:SetPoint("TOPLEFT", MerchantFrame, "BOTTOMLEFT", 12, 2)
-        width = math.max(40, math.min(width, MerchantFrame:GetWidth() - 32))
-    end
     if PanelTemplates_TabResize then PanelTemplates_TabResize(button, 0, width, 40, width) end
     MerchantTabState()
 end
