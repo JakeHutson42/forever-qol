@@ -4,6 +4,7 @@ local tabRoot
 local rail, railTabs = nil, {}
 local layoutActive
 local RAIL_PADDING, RAIL_GAP, RAIL_TOP = 24, 10, 54
+local TAVERN_ASPECT = 1 -- The shipped tavern texture is square.
 
 local function RestoreOriginalTabs()
     for _, button in ipairs(railTabs) do
@@ -234,14 +235,9 @@ function Addon:AuctionSurface(frame)
     shade:SetAllPoints(art)
     shade:SetColorTexture(0.035, 0.017, 0.007, 0.40)
     local function Crop()
-        local ratio = frame:GetWidth() / math.max(1, frame:GetHeight())
-        if ratio < 1.5 then
-            local span = ratio / 1.5
-            art:SetTexCoord((1 - span) / 2, (1 + span) / 2, 0, 1)
-        else
-            local span = 1.5 / ratio
-            art:SetTexCoord(0, 1, 0, span)
-        end
+        local ratio = math.max(1, frame:GetWidth() - 2) / math.max(1, frame:GetHeight() - 2)
+        local uSpan, vSpan = math.min(1, ratio / TAVERN_ASPECT), math.min(1, TAVERN_ASPECT / ratio)
+        art:SetTexCoord((1 - uSpan) / 2, (1 + uSpan) / 2, (1 - vSpan) / 2, (1 + vSpan) / 2)
     end
     frame:HookScript("OnSizeChanged", Crop)
     Crop()

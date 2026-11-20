@@ -4260,6 +4260,32 @@ do
         "Tabs added after styling is disabled remain in the normal visible bottom row")
 end
 
+do
+    local env, state = boot(nil)
+    local frame = env.CreateFrame("Frame", nil, env.UIParent)
+    frame:SetSize(800, 460)
+    state.addon:AuctionSurface(frame)
+    local art
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region.textureValue == "Interface\\AddOns\\SmallerUI\\Media\\AuctionTavern.tga" then art = region end
+    end
+    local coords = art.texCoords
+    check(coords[1] == 0 and coords[2] == 1 and math.abs((coords[3] + coords[4]) / 2 - 0.5) < 0.000001
+        and math.abs(coords[4] - coords[3] - 458 / 798) < 0.000001,
+        "Wide auction backgrounds center the square artwork vertically without distorting the table")
+    frame:SetSize(640, 655)
+    frame.scripts.OnSizeChanged(frame)
+    coords = art.texCoords
+    check(coords[3] == 0 and coords[4] == 1 and math.abs((coords[1] + coords[2]) / 2 - 0.5) < 0.000001
+        and math.abs(coords[2] - coords[1] - 638 / 653) < 0.000001,
+        "Tall vendor backgrounds center the artwork horizontally and retain its natural proportions")
+    frame:SetSize(526, 526)
+    frame.scripts.OnSizeChanged(frame)
+    coords = art.texCoords
+    check(coords[1] == 0 and coords[2] == 1 and coords[3] == 0 and coords[4] == 1,
+        "Square panels show the full tavern image")
+end
+
 print(string.format("Passed %d checks (%s).", passed, _VERSION))
 
 return boot
